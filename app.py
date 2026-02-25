@@ -4,6 +4,7 @@ Main entry point for Streamlit application
 """
 
 import streamlit as st
+import hashlib
 
 st.set_page_config(
     page_title="ALT Group | Octo Dashboard",
@@ -11,6 +12,59 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ============================================
+# PASSWORD AUTHENTICATION
+# ============================================
+
+USERS = {
+    "liron": "octo2026",
+    "alex": "octo2026",
+    "team": "altgroup2026",
+}
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def check_login(username, password):
+    username = username.strip().lower()
+    if username in USERS and USERS[username] == password:
+        return True
+    return False
+
+def show_login():
+    st.markdown("""
+    <style>
+        .login-container {
+            max-width: 400px;
+            margin: 80px auto;
+            padding: 40px;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border-radius: 16px;
+            border: 1px solid #0f3460;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("### 📊 Octo Fund Dashboard")
+        st.markdown("**ALT Group** | Private Capital")
+        st.divider()
+        username = st.text_input("שם משתמש", placeholder="liron")
+        password = st.text_input("סיסמא", type="password", placeholder="••••••••")
+        if st.button("כניסה", type="primary", use_container_width=True):
+            if check_login(username, password):
+                st.session_state.logged_in = True
+                st.session_state.username = username.strip().lower()
+                st.rerun()
+            else:
+                st.error("שם משתמש או סיסמא שגויים")
+
+def require_login():
+    if "logged_in" not in st.session_state or not st.session_state.logged_in:
+        show_login()
+        st.stop()
 
 # Hebrew RTL support
 st.markdown("""
@@ -61,6 +115,8 @@ st.markdown("""
 
 
 def main():
+    require_login()
+
     # Sidebar
     with st.sidebar:
         st.markdown("## 📊 Octo Dashboard")
@@ -81,6 +137,10 @@ def main():
         
         st.divider()
         st.caption("גרסה 1.0 | פברואר 2026")
+        st.divider()
+        if st.button("🚪 התנתק", use_container_width=True):
+            st.session_state.logged_in = False
+            st.rerun()
     
     # Page routing
     if "סקירה כללית" in page:
