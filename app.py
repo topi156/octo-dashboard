@@ -120,15 +120,41 @@ st.markdown("""
     .stApp, .main, [data-testid="stAppViewContainer"] { color: #e2e8f0 !important; }
     p, span, label, div { color: #e2e8f0; }
     
-    /* Expander text */
-    [data-testid="stExpander"] summary, 
+    /* Expander - fix RTL arrow overlap */
+    [data-testid="stExpander"] summary { 
+        color: #e2e8f0 !important;
+        direction: rtl !important;
+        display: flex !important;
+        flex-direction: row-reverse !important;
+        align-items: center !important;
+        gap: 8px !important;
+    }
     [data-testid="stExpander"] summary p,
     [data-testid="stExpander"] summary span { color: #e2e8f0 !important; }
+    [data-testid="stExpander"] summary svg { flex-shrink: 0; }
     [data-testid="stExpander"] { 
         background: #1a1a2e !important; 
         border: 1px solid #0f3460 !important;
         border-radius: 10px !important;
+        margin-bottom: 8px !important;
     }
+
+    /* Selectbox dropdown - dark background */
+    [data-testid="stSelectbox"] > div > div {
+        background: #1e293b !important;
+        color: #e2e8f0 !important;
+        border-color: #334155 !important;
+    }
+    ul[data-testid="stSelectboxVirtualDropdown"],
+    [role="listbox"] {
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
+    }
+    [role="option"] { 
+        background: #1e293b !important; 
+        color: #e2e8f0 !important; 
+    }
+    [role="option"]:hover { background: #0f3460 !important; }
 
     /* Metric cards */
     [data-testid="metric-container"] {
