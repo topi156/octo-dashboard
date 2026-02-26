@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v4.0 - app.py
-Overview Table Update + Full Audit Logging System for Rollbacks
+OCTO FUND DASHBOARD v4.1 - app.py
+Overview Table Update + Full Audit Logging System + AI Capital Call PDF Extraction
 """
 
 import streamlit as st
@@ -40,6 +40,7 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
     return full_text[:4000] + "\n\n[...]\n\n" + full_text[-8000:]
 
 def analyze_pdf_with_ai(pdf_bytes: bytes) -> dict:
+    """ AI Extraction for Fund Presentations (Pipeline) """
     pdf_text = extract_pdf_text(pdf_bytes)
     prompt = f"""You are an expert private equity analyst. Carefully analyze this fund presentation and extract ALL available information.
 Be thorough - search the entire text for financial terms, fees, returns, geography, and strategy details.
@@ -80,6 +81,46 @@ FUND PRESENTATION TEXT:
         "model": "anthropic/claude-3.5-sonnet",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 2000
+    }
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://octo-dashboard.streamlit.app"
+    }
+    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=90)
+    if resp.status_code != 200:
+        raise Exception(f"OpenRouter error {resp.status_code}: {resp.text[:300]}")
+    content = resp.json()["choices"][0]["message"]["content"].strip()
+    if "```" in content:
+        content = content.split("```")[1]
+        if content.startswith("json"):
+            content = content[4:]
+    return json.loads(content.strip())
+
+def analyze_capital_call_pdf_with_ai(pdf_bytes: bytes) -> dict:
+    """ AI Extraction for Capital Call Notices """
+    pdf_text = extract_pdf_text(pdf_bytes)
+    prompt = f"""You are an expert private equity fund accountant. Carefully analyze this Capital Call Notice and extract the financial details.
+
+Return ONLY a valid JSON object with these exact keys (use 0 if a specific breakdown amount is not found, use null for missing dates):
+{{
+    "call_date": "YYYY-MM-DD" (The date the notice was issued/written),
+    "payment_date": "YYYY-MM-DD" (The due date for the payment/wire),
+    "amount": total amount requested from the LP (number, e.g., 158889),
+    "investments": amount allocated specifically to investments or capital commitment (number, e.g., 157143),
+    "mgmt_fee": amount allocated to management fees (number),
+    "fund_expenses": amount allocated to fund expenses or reserve (number, e.g., 1746)
+}}
+
+IMPORTANT: Return ONLY the JSON, no markdown, no extra text. Ensure amounts are numbers without commas.
+
+CAPITAL CALL TEXT:
+{pdf_text}"""
+
+    payload = {
+        "model": "anthropic/claude-3.5-sonnet",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1000
     }
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -289,7 +330,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 4.0 | פברואר 2026")
+        st.caption("גרסה 4.1 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -312,9 +353,7 @@ def show_audit_logs():
         return
         
     for log in logs:
-        # פירמוט תאריך לתצוגה יפה
         dt_str = log["created_at"].replace("T", " ")[:16]
-        
         icon = "🔴" if log["action"] == "DELETE" else "🟡" if log["action"] == "UPDATE" else "⚪"
         
         with st.expander(f"{icon} {dt_str} | משתמש: {log['username']} | {log['details']}"):
@@ -682,7 +721,7 @@ def show_portfolio():
                     st.success("✅ קרן חדשה נוספה בהצלחה! היא מופיעה כעת בלשוניות למטה.")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"שגיאה (האם הרצת את פקודת ה-SQL?): {e}")
+                    st.error(f"שגיאה: {e}")
 
     funds = get_funds()
     if not funds:
@@ -848,23 +887,53 @@ def show_fund_detail(fund):
             st.info("אין Capital Calls עדיין")
 
         st.divider()
-        st.markdown("**➕ הוסף Capital Call**")
+        st.markdown("**🤖 הוסף Capital Call מתוך PDF (זיהוי אוטומטי)**")
+        uploaded_cc_pdf = st.file_uploader("העלה מסמך קריאה לכסף (PDF)", type=["pdf"], key=f"cc_uploader_{fund['id']}")
+        
+        if uploaded_cc_pdf:
+            if st.button("נתח מסמך עכשיו", type="primary", key=f"cc_analyze_btn_{fund['id']}"):
+                with st.spinner("Claude מנתח את המסמך ומחלץ נתונים..."):
+                    try:
+                        cc_bytes = uploaded_cc_pdf.read()
+                        ai_result = analyze_capital_call_pdf_with_ai(cc_bytes)
+                        st.session_state[f"cc_ai_result_{fund['id']}"] = ai_result
+                        st.success("✅ הנתונים חולצו בהצלחה! אנא אשר אותם בטופס למטה.")
+                    except Exception as e:
+                        st.error(f"שגיאה בניתוח המסמך: {e}")
+        
+        st.divider()
+        st.markdown("**➕ או הזן פרטים ידנית**")
+        
+        # משיכת נתונים מה-Session במידה ובוצע ניתוח AI
+        ai_data = st.session_state.get(f"cc_ai_result_{fund['id']}", {})
+        
+        def_call_date = date.today()
+        if ai_data.get("call_date"):
+            try: def_call_date = datetime.strptime(ai_data["call_date"], "%Y-%m-%d").date()
+            except: pass
+            
+        def_pay_date = date.today()
+        if ai_data.get("payment_date"):
+            try: def_pay_date = datetime.strptime(ai_data["payment_date"], "%Y-%m-%d").date()
+            except: pass
+
         with st.form(f"add_call_{fund['id']}"):
             col1, col2, col3 = st.columns(3)
             with col1:
                 call_num = st.number_input("מספר קריאה", min_value=1, value=len(calls)+1)
-                call_date = st.date_input("תאריך קבלה")
-                payment_date = st.date_input("תאריך תשלום")
+                call_date = st.date_input("תאריך קבלה", value=def_call_date)
+                payment_date = st.date_input("תאריך תשלום", value=def_pay_date)
             with col2:
-                amount = st.number_input("סכום כולל", min_value=0.0)
-                investments = st.number_input("השקעות", min_value=0.0)
-                mgmt_fee = st.number_input("דמי ניהול", min_value=0.0)
+                amount = st.number_input("סכום כולל", min_value=0.0, value=float(ai_data.get("amount", 0)))
+                investments = st.number_input("השקעות (Capital Commitment)", min_value=0.0, value=float(ai_data.get("investments", 0)))
+                mgmt_fee = st.number_input("דמי ניהול", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
             with col3:
-                fund_expenses = st.number_input("הוצאות קרן", min_value=0.0)
+                fund_expenses = st.number_input("הוצאות קרן", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
                 gp_contribution = st.number_input("GP Contribution", min_value=0.0)
                 is_future = st.checkbox("קריאה עתידית")
                 notes = st.text_input("הערות")
-            if st.form_submit_button("שמור", type="primary"):
+                
+            if st.form_submit_button("שמור קריאה למערכת", type="primary"):
                 try:
                     get_supabase().table("capital_calls").insert({
                         "fund_id": fund["id"], "call_number": call_num,
@@ -873,6 +942,9 @@ def show_fund_detail(fund):
                         "mgmt_fee": mgmt_fee, "fund_expenses": fund_expenses,
                         "gp_contribution": gp_contribution, "is_future": is_future, "notes": notes
                     }).execute()
+                    
+                    # ניקוי הזיכרון של ה-AI אחרי שמירה מוצלחת
+                    st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
                     st.success("✅ נשמר!")
                     st.rerun()
                 except Exception as e:
