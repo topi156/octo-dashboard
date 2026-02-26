@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v3.9 - app.py
-Add New Fund from Portfolio + Edit Support for Geography & Investment Date
+OCTO FUND DASHBOARD v4.0 - app.py
+Overview Table Update + Full Audit Logging System for Rollbacks
 """
 
 import streamlit as st
@@ -107,132 +107,78 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&display=swap');
     
-    * {
-        font-family: 'Heebo', sans-serif;
-    }
-
+    * { font-family: 'Heebo', sans-serif; }
     p, label, h1, h2, h3, h4, h5, h6, a, li, input, textarea, button, [data-testid="stMetricValue"] {
         font-family: 'Heebo', sans-serif !important;
     }
+    [data-testid="stExpander"] summary p { font-family: 'Heebo', sans-serif !important; }
 
-    [data-testid="stExpander"] summary p {
-        font-family: 'Heebo', sans-serif !important;
-    }
-
-    [data-testid="stExpanderToggleIcon"],
-    [data-testid="stExpanderToggleIcon"] *,
-    [data-testid="stIconMaterial"],
-    .material-symbols-rounded,
-    .material-icons,
-    i, svg {
+    [data-testid="stExpanderToggleIcon"], [data-testid="stExpanderToggleIcon"] *,
+    [data-testid="stIconMaterial"], .material-symbols-rounded, .material-icons, i, svg {
         font-family: 'Material Symbols Rounded', 'Material Icons' !important;
         font-feature-settings: 'liga' !important;
         -webkit-font-feature-settings: 'liga' !important;
-        text-transform: none !important;
-        letter-spacing: normal !important;
+        text-transform: none !important; letter-spacing: normal !important;
     }
-
-    [data-testid="stExpanderToggleIcon"] {
-        max-width: 24px !important;
-        overflow: hidden !important;
-        white-space: nowrap !important;
-    }
+    [data-testid="stExpanderToggleIcon"] { max-width: 24px !important; overflow: hidden !important; white-space: nowrap !important; }
 
     .main { direction: rtl; }
     .stMarkdown, .stText, h1, h2, h3, p { direction: rtl; text-align: right; }
     .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], section[data-testid="stSidebar"] + div { 
-        background-color: #0f1117 !important; 
-        color: #e2e8f0 !important;
+        background-color: #0f1117 !important; color: #e2e8f0 !important;
     }
     p, span, label, div { color: #e2e8f0; }
 
     [data-testid="stExpander"] summary { 
-        color: #e2e8f0 !important;
-        direction: rtl !important;
-        display: flex !important;
-        flex-direction: row-reverse !important;
-        align-items: center !important;
-        gap: 8px !important;
+        color: #e2e8f0 !important; direction: rtl !important; display: flex !important;
+        flex-direction: row-reverse !important; align-items: center !important; gap: 8px !important;
     }
     [data-testid="stExpander"] { 
-        background: #1a1a2e !important; 
-        border: 1px solid #0f3460 !important;
-        border-radius: 10px !important;
-        margin-bottom: 8px !important;
+        background: #1a1a2e !important; border: 1px solid #0f3460 !important;
+        border-radius: 10px !important; margin-bottom: 8px !important;
     }
 
-    [data-testid="stSelectbox"] > div > div,
-    [data-testid="stSelectbox"] > div > div > div,
+    [data-testid="stSelectbox"] > div > div, [data-testid="stSelectbox"] > div > div > div,
     [data-testid="stSelectbox"] span:not(.material-symbols-rounded) { 
-        background-color: #1e293b !important;
-        color: #e2e8f0 !important;
-        border-color: #334155 !important;
+        background-color: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important;
     }
-    [data-baseweb="popover"],
-    [data-baseweb="popover"] > div,
-    [data-baseweb="popover"] > div > div { background-color: #1e293b !important; }
-    [data-baseweb="select"] > div,
-    [data-baseweb="menu"],
-    [data-baseweb="menu"] > div,
-    [data-baseweb="menu"] ul {
-        background-color: #1e293b !important;
-        border: 1px solid #334155 !important;
+    [data-baseweb="popover"], [data-baseweb="popover"] > div, [data-baseweb="popover"] > div > div { background-color: #1e293b !important; }
+    [data-baseweb="select"] > div, [data-baseweb="menu"], [data-baseweb="menu"] > div, [data-baseweb="menu"] ul {
+        background-color: #1e293b !important; border: 1px solid #334155 !important;
     }
     [data-baseweb="menu"] * { color: #e2e8f0 !important; }
-    ul[data-testid="stSelectboxVirtualDropdown"],
-    [role="listbox"],
-    [role="listbox"] > div,
-    [role="listbox"] li { 
-        background-color: #1e293b !important;
-        border-color: #334155 !important;
+    ul[data-testid="stSelectboxVirtualDropdown"], [role="listbox"], [role="listbox"] > div, [role="listbox"] li { 
+        background-color: #1e293b !important; border-color: #334155 !important;
     }
     [role="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
-    [role="option"]:hover,
-    [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
+    [role="option"]:hover, [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
     [role="option"] * { color: #e2e8f0 !important; background-color: transparent !important; }
     li[class*="option"], div[class*="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
 
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border: 1px solid #0f3460;
-        border-radius: 12px;
-        padding: 12px;
-        overflow: hidden;
+        border: 1px solid #0f3460; border-radius: 12px; padding: 12px; overflow: hidden;
     }
-    [data-testid="metric-container"] label,
-    [data-testid="metric-container"] div { color: #94a3b8 !important; }
+    [data-testid="metric-container"] label, [data-testid="metric-container"] div { color: #94a3b8 !important; }
     [data-testid="metric-container"] [data-testid="stMetricValue"] { 
-        color: #ffffff !important; 
-        font-weight: 700 !important; 
-        font-size: 1.3rem !important; 
-        word-break: break-word !important; 
-        white-space: normal !important; 
-        line-height: 1.2 !important;
+        color: #ffffff !important; font-weight: 700 !important; font-size: 1.3rem !important; 
+        word-break: break-word !important; white-space: normal !important; line-height: 1.2 !important;
     }
 
     [data-testid="stSidebar"] { background: #0f1117 !important; }
-
     [data-testid="stTabs"] [role="tab"] { color: #94a3b8 !important; }
     [data-testid="stTabs"] [role="tab"][aria-selected="true"] { color: #ffffff !important; border-bottom-color: #3b82f6 !important; }
 
-    [data-testid="stTextInput"] input,
-    [data-testid="stNumberInput"] input,
-    [data-testid="stTextArea"] textarea,
-    [data-testid="stDateInput"] input { 
-        background: #1e293b !important; 
-        color: #e2e8f0 !important;
-        border-color: #334155 !important;
+    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+    [data-testid="stTextArea"] textarea, [data-testid="stDateInput"] input { 
+        background: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important;
     }
 
     [data-testid="stDataFrame"] { color: #e2e8f0 !important; }
     [data-testid="stCaptionContainer"] { color: #94a3b8 !important; }
     hr { border-color: #1e293b !important; }
-
     .dashboard-header {
-        background: linear-gradient(90deg, #1a1a2e, #0f3460);
-        padding: 20px 30px;
-        border-radius: 12px;
-        margin-bottom: 24px;
+        background: linear-gradient(90deg, #1a1a2e, #0f3460); padding: 20px 30px; border-radius: 12px; margin-bottom: 24px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -243,52 +189,61 @@ def get_supabase() -> Client:
     key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YXhpcHdzdmxuc3ltZGJrb2txIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMjQzNTQsImV4cCI6MjA4NzYwMDM1NH0.6LyuFmRi6ApaWbgy_acQxEsp6r96dkG8xYJZKFpB6aQ"
     return create_client(url, key)
 
+# --- AUDIT LOGGING FUNCTION ---
+def log_action(action: str, table_name: str, details: str, old_data: dict = None):
+    try:
+        sb = get_supabase()
+        username = st.session_state.get("username", "system")
+        sb.table("audit_logs").insert({
+            "username": username,
+            "action": action,
+            "table_name": table_name,
+            "details": details,
+            "old_data": old_data or {}
+        }).execute()
+    except Exception as e:
+        pass # Fail silently, do not break application flow
+
+def get_audit_logs():
+    try:
+        return get_supabase().table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute().data or []
+    except: return []
+
 # --- DB Functions ---
 def get_funds():
-    try:
-        return get_supabase().table("funds").select("*").order("name").execute().data or []
-    except Exception as e:
-        st.error(f"שגיאה בטעינת קרנות: {e}")
-        return []
+    try: return get_supabase().table("funds").select("*").order("name").execute().data or []
+    except Exception as e: st.error(f"שגיאה בטעינת קרנות: {e}"); return []
 
 def get_capital_calls(fund_id):
-    try:
-        return get_supabase().table("capital_calls").select("*").eq("fund_id", fund_id).order("call_number").execute().data or []
+    try: return get_supabase().table("capital_calls").select("*").eq("fund_id", fund_id).order("call_number").execute().data or []
     except: return []
 
 def get_distributions(fund_id):
-    try:
-        return get_supabase().table("distributions").select("*").eq("fund_id", fund_id).order("dist_date").execute().data or []
+    try: return get_supabase().table("distributions").select("*").eq("fund_id", fund_id).order("dist_date").execute().data or []
     except: return []
 
 def get_quarterly_reports(fund_id):
-    try:
-        return get_supabase().table("quarterly_reports").select("*").eq("fund_id", fund_id).order("year,quarter").execute().data or []
+    try: return get_supabase().table("quarterly_reports").select("*").eq("fund_id", fund_id).order("year,quarter").execute().data or []
     except: return []
 
 def get_pipeline_funds():
-    try:
-        return get_supabase().table("pipeline_funds").select("*").order("target_close_date").execute().data or []
+    try: return get_supabase().table("pipeline_funds").select("*").order("target_close_date").execute().data or []
     except: return []
 
 def get_gantt_tasks(pipeline_fund_id):
-    try:
-        return get_supabase().table("gantt_tasks").select("*").eq("pipeline_fund_id", pipeline_fund_id).order("start_date").execute().data or []
+    try: return get_supabase().table("gantt_tasks").select("*").eq("pipeline_fund_id", pipeline_fund_id).order("start_date").execute().data or []
     except: return []
 
 def get_investors():
-    try:
-        return get_supabase().table("investors").select("*").execute().data or []
+    try: return get_supabase().table("investors").select("*").execute().data or []
     except: return []
 
 def get_lp_calls():
-    try:
-        return get_supabase().table("lp_calls").select("*").order("call_date").execute().data or []
+    try: return get_supabase().table("lp_calls").select("*").order("call_date").execute().data or []
     except: return []
 
 def get_lp_payments():
-    try:
-        return get_supabase().table("lp_payments").select("*").execute().data or []
+    try: return get_supabase().table("lp_payments").select("*").execute().data or []
     except: return []
 
 # --- Auth ---
@@ -330,25 +285,48 @@ def main():
             "👥 משקיעים",
             "🔍 Pipeline",
             "📈 דוחות רבעוניים",
+            "📋 יומן פעולות"
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 2.9 | פברואר 2026")
+        st.caption("גרסה 4.0 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
             st.rerun()
 
-    if "סקירה כללית" in page:
-        show_overview()
-    elif "תיק השקעות" in page:
-        show_portfolio()
-    elif "משקיעים" in page:
-        show_investors()
-    elif "Pipeline" in page:
-        show_pipeline()
-    elif "דוחות" in page:
-        show_reports()
+    if "סקירה כללית" in page: show_overview()
+    elif "תיק השקעות" in page: show_portfolio()
+    elif "משקיעים" in page: show_investors()
+    elif "Pipeline" in page: show_pipeline()
+    elif "דוחות" in page: show_reports()
+    elif "יומן" in page: show_audit_logs()
+
+def show_audit_logs():
+    st.title("📋 יומן פעולות מערכת (Audit Logs)")
+    st.markdown("כאן ניתן לצפות בהיסטוריית שינויים ומחיקות שבוצעו במערכת, ולשחזר נתונים במידת הצורך.")
+    
+    logs = get_audit_logs()
+    if not logs:
+        st.info("אין עדיין תיעוד פעולות במערכת.")
+        return
+        
+    for log in logs:
+        # פירמוט תאריך לתצוגה יפה
+        dt_str = log["created_at"].replace("T", " ")[:16]
+        
+        icon = "🔴" if log["action"] == "DELETE" else "🟡" if log["action"] == "UPDATE" else "⚪"
+        
+        with st.expander(f"{icon} {dt_str} | משתמש: {log['username']} | {log['details']}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**סוג פעולה:** {log['action']}")
+            with col2:
+                st.write(f"**טבלת יעד:** {log['table_name']}")
+            
+            if log.get("old_data") and log["old_data"] != {}:
+                st.write("**נתונים לפני השינוי/מחיקה (לצורך שחזור ידני):**")
+                st.json(log["old_data"])
 
 def show_overview():
     st.markdown("""
@@ -391,6 +369,7 @@ def show_overview():
                     "קרן": f["name"],
                     "מטבע": f.get("currency", "USD"),
                     "התחייבות": format_currency(commitment, currency_sym) if commitment else "—",
+                    "סכום שנקרא": format_currency(total_called, currency_sym) if total_called > 0 else "—",
                     "נקרא %": pct,
                     "סטטוס": "פעיל" if f.get("status") == "active" else f.get("status", ""),
                 })
@@ -467,6 +446,7 @@ def show_investors():
                     with cd1:
                         if st.button("✅ כן", key=f"yes_del_inv_{inv['id']}"):
                             try:
+                                log_action("DELETE", "investors", f"נמחק משקיע: {inv['name']}", inv)
                                 sb.table("investors").delete().eq("id", inv["id"]).execute()
                                 st.session_state.pop(f"confirm_del_inv_{inv['id']}", None)
                                 st.rerun()
@@ -485,6 +465,7 @@ def show_investors():
                         with ce1:
                             if st.form_submit_button("💾 שמור שינויים"):
                                 try:
+                                    log_action("UPDATE", "investors", f"עודכן משקיע: {inv['name']} ל-{new_name}", inv)
                                     sb.table("investors").update({"name": new_name, "commitment": new_commit}).eq("id", inv["id"]).execute()
                                     st.session_state.pop(f"editing_inv_{inv['id']}", None)
                                     st.rerun()
@@ -631,6 +612,7 @@ def show_investors():
                     with d_c1:
                         if st.button("✅ כן", key=f"yes_del_lpc_{c['id']}"):
                             try:
+                                log_action("DELETE", "lp_calls", f"נמחקה קריאת כסף למשקיעים: {c['call_date']}", c)
                                 sb.table("lp_calls").delete().eq("id", c["id"]).execute()
                                 st.session_state.pop(f"confirm_del_lpc_{c['id']}", None)
                                 st.rerun()
@@ -653,6 +635,7 @@ def show_investors():
                         with e_c1:
                             if st.form_submit_button("💾 שמור"):
                                 try:
+                                    log_action("UPDATE", "lp_calls", f"עודכנה קריאת כסף למשקיעים: {c['call_date']}", c)
                                     sb.table("lp_calls").update({"call_date": str(edit_date), "call_pct": edit_pct}).eq("id", c["id"]).execute()
                                     st.session_state.pop(f"editing_lpc_{c['id']}", None)
                                     st.rerun()
@@ -667,7 +650,6 @@ def show_investors():
 def show_portfolio():
     st.title("📁 תיק השקעות")
     
-    # --- הוספת קרן חדשה ישירות לתיק ---
     with st.expander("➕ הוסף קרן חדשה לתיק"):
         with st.form("add_new_fund_form"):
             col1, col2 = st.columns(2)
@@ -747,6 +729,7 @@ def show_fund_detail(fund):
             if st.button("✅ כן, מחק הכל", key=f"yes_fund_{fund['id']}", type="primary"):
                 try:
                     sb = get_supabase()
+                    log_action("DELETE", "funds", f"מחיקת קרן '{fund['name']}' כולל כל הנתונים שלה", fund)
                     sb.table("capital_calls").delete().eq("fund_id", fund["id"]).execute()
                     sb.table("distributions").delete().eq("fund_id", fund["id"]).execute()
                     sb.table("quarterly_reports").delete().eq("fund_id", fund["id"]).execute()
@@ -793,6 +776,7 @@ def show_fund_detail(fund):
             with c1:
                 if st.form_submit_button("💾 שמור", type="primary"):
                     try:
+                        log_action("UPDATE", "funds", f"עדכון פרטי קרן השקעה: {fund['name']}", fund)
                         get_supabase().table("funds").update({
                             "name": new_name, "manager": new_manager,
                             "strategy": new_strategy, "commitment": new_commitment,
@@ -838,6 +822,7 @@ def show_fund_detail(fund):
                         with cc1:
                             if st.button("✅ מחק", key=f"yes_call_{c['id']}"):
                                 try:
+                                    log_action("DELETE", "capital_calls", f"מחיקת Capital Call #{c.get('call_number')} מהקרן {fund['name']}", c)
                                     get_supabase().table("capital_calls").delete().eq("id", c["id"]).execute()
                                     st.rerun()
                                 except Exception as e:
@@ -910,6 +895,7 @@ def show_fund_detail(fund):
                         with dc1:
                             if st.button("✅ מחק", key=f"yes_dist_{d['id']}"):
                                 try:
+                                    log_action("DELETE", "distributions", f"מחיקת חלוקה #{d.get('dist_number')} מהקרן {fund['name']}", d)
                                     get_supabase().table("distributions").delete().eq("id", d["id"]).execute()
                                     st.rerun()
                                 except Exception as e:
@@ -961,6 +947,7 @@ def show_fund_detail(fund):
                         with rc1:
                             if st.button("✅ מחק", key=f"yes_rep_{r['id']}"):
                                 try:
+                                    log_action("DELETE", "quarterly_reports", f"מחיקת דוח Q{r['quarter']}/{r['year']} של קרן {fund['name']}", r)
                                     get_supabase().table("quarterly_reports").delete().eq("id", r["id"]).execute()
                                     st.rerun()
                                 except Exception as e:
@@ -1136,6 +1123,7 @@ def show_pipeline():
                     if st.button("✅ כן, מחק", key=f"yes_btn_{fid}", type="primary"):
                         try:
                             sb = get_supabase()
+                            log_action("DELETE", "pipeline_funds", f"מחיקת קרן פייפליין: {fund['name']}", fund)
                             sb.table("gantt_tasks").delete().eq("pipeline_fund_id", fid).execute()
                             sb.table("pipeline_funds").delete().eq("id", fid).execute()
                             st.success("נמחק!")
@@ -1181,6 +1169,7 @@ def show_pipeline():
                     with col_save:
                         if st.form_submit_button("💾 שמור שינויים", type="primary"):
                             try:
+                                log_action("UPDATE", "pipeline_funds", f"עדכון פרטי קרן פייפליין: {fund['name']}", fund)
                                 get_supabase().table("pipeline_funds").update({
                                     "name": new_name, "manager": new_manager,
                                     "strategy": new_strategy, "target_commitment": new_commitment,
