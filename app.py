@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v3.2 - app.py
-Full Supabase integration + PDF AI Analysis via OpenRouter + LPs Management + Totals
+OCTO FUND DASHBOARD v3.4 - app.py
+FOF LPs Management, CSS Icon Fix, Gantt Keys Fix, Editable Task Dates
 """
 
 import streamlit as st
@@ -14,7 +14,6 @@ from supabase import create_client, Client
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 
 def format_currency(amount: float, currency_sym: str = "$") -> str:
-    """מעצב סכומים גדולים לקריאה נוחה (M למיליונים, B למיליארדים)"""
     if amount is None or amount == 0:
         return "—"
     if amount >= 1_000_000_000:
@@ -107,7 +106,17 @@ st.set_page_config(
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&display=swap');
-    * { font-family: 'Heebo', sans-serif !important; }
+    
+    /* Apply Heebo ONLY to elements that are NOT icons */
+    html, body, [class*="st-"], p, div, span, label, h1, h2, h3, h4, h5, h6, li, button, input {
+        font-family: 'Heebo', sans-serif;
+    }
+    
+    /* Force Streamlit Material Icons to behave normally (Prevents "keyboard_arrow" text bug) */
+    .material-symbols-rounded, .material-icons, [class*="icon"], i, svg {
+        font-family: 'Material Symbols Rounded', 'Material Icons' !important;
+    }
+    
     .main { direction: rtl; }
     .stMarkdown, .stText, h1, h2, h3, p { direction: rtl; text-align: right; }
     .stApp { background-color: #0f1117 !important; }
@@ -115,7 +124,6 @@ st.markdown("""
     [data-testid="stHeader"] { background-color: #0f1117 !important; }
     section[data-testid="stSidebar"] + div { background-color: #0f1117 !important; }
     .stApp, .main, [data-testid="stAppViewContainer"] { color: #e2e8f0 !important; }
-    p, span, label, div { color: #e2e8f0; }
 
     /* Expander */
     [data-testid="stExpander"] summary { 
@@ -126,9 +134,6 @@ st.markdown("""
         align-items: center !important;
         gap: 8px !important;
     }
-    [data-testid="stExpander"] summary p,
-    [data-testid="stExpander"] summary span { color: #e2e8f0 !important; }
-    [data-testid="stExpander"] summary svg { flex-shrink: 0; }
     [data-testid="stExpander"] { 
         background: #1a1a2e !important; 
         border: 1px solid #0f3460 !important;
@@ -136,10 +141,10 @@ st.markdown("""
         margin-bottom: 8px !important;
     }
 
-    /* Selectbox + Dropdown - COMPREHENSIVE DARK FIX */
+    /* Selectbox + Dropdown */
     [data-testid="stSelectbox"] > div > div,
     [data-testid="stSelectbox"] > div > div > div,
-    [data-testid="stSelectbox"] span { 
+    [data-testid="stSelectbox"] span:not(.material-symbols-rounded) { 
         background-color: #1e293b !important;
         color: #e2e8f0 !important;
         border-color: #334155 !important;
@@ -189,7 +194,6 @@ st.markdown("""
 
     /* Sidebar */
     [data-testid="stSidebar"] { background: #0f1117 !important; }
-    [data-testid="stSidebar"] * { color: #e2e8f0 !important; }
 
     /* Tabs */
     [data-testid="stTabs"] [role="tab"] { color: #94a3b8 !important; }
@@ -215,9 +219,6 @@ st.markdown("""
         border-radius: 12px;
         margin-bottom: 24px;
     }
-    [data-testid="stToggle"] label { color: #94a3b8 !important; }
-    [data-testid="stMultiSelect"] span { color: #e2e8f0 !important; }
-    [data-testid="stAlert"] { color: #e2e8f0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -260,23 +261,20 @@ def get_gantt_tasks(pipeline_fund_id):
         return get_supabase().table("gantt_tasks").select("*").eq("pipeline_fund_id", pipeline_fund_id).order("start_date").execute().data or []
     except: return []
 
-# --- New LP DB Functions ---
-def get_investors(fund_id):
+# --- LPs Functions (FOF Level) ---
+def get_investors():
     try:
-        return get_supabase().table("investors").select("*").eq("fund_id", fund_id).execute().data or []
+        return get_supabase().table("investors").select("*").execute().data or []
     except: return []
 
-def get_lp_calls(fund_id):
+def get_lp_calls():
     try:
-        return get_supabase().table("lp_calls").select("*").eq("fund_id", fund_id).order("call_date").execute().data or []
+        return get_supabase().table("lp_calls").select("*").order("call_date").execute().data or []
     except: return []
 
-def get_lp_payments(fund_id):
+def get_lp_payments():
     try:
-        calls = get_lp_calls(fund_id)
-        if not calls: return []
-        call_ids = [c["id"] for c in calls]
-        return get_supabase().table("lp_payments").select("*").in_("lp_call_id", call_ids).execute().data or []
+        return get_supabase().table("lp_payments").select("*").execute().data or []
     except: return []
 
 # --- Auth ---
@@ -321,7 +319,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 2.2 | פברואר 2026")
+        st.caption("גרסה 2.4 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -405,46 +403,37 @@ def show_overview():
             st.info("💡 הוסף Calls עתידיים כדי לראות תחזית כאן")
 
 
-# --- NEW LPs PAGE WITH TOTALS ---
 def show_investors():
-    st.title("👥 ניהול משקיעים וקריאות להון")
-    funds = get_funds()
-    if not funds:
-        st.info("אין קרנות מוגדרות.")
-        return
+    st.title("👥 ניהול משקיעים וקריאות להון (Master Fund)")
+    
+    currency_sym = "$" 
 
-    fund_options = {f["name"]: f["id"] for f in funds}
-    selected_fund_name = st.selectbox("בחר קרן", list(fund_options.keys()))
-    fund_id = fund_options[selected_fund_name]
-    currency_sym = "€" if next((f["currency"] for f in funds if f["id"] == fund_id), "USD") == "EUR" else "$"
+    investors = get_investors()
+    lp_calls = get_lp_calls()
+    payments = get_lp_payments()
 
-    investors = get_investors(fund_id)
-    lp_calls = get_lp_calls(fund_id)
-    payments = get_lp_payments(fund_id)
-
-    with st.expander("➕ הוסף משקיע חדש לקרן"):
+    with st.expander("➕ הוסף משקיע חדש לקרן (FOF)"):
         with st.form("add_lp_form"):
             c1, c2 = st.columns(2)
             with c1:
                 inv_name = st.text_input("שם משקיע")
             with c2:
-                inv_commit = st.number_input("סכום התחייבות", min_value=0)
+                inv_commit = st.number_input(f"סכום התחייבות ({currency_sym})", min_value=0.0)
             if st.form_submit_button("שמור משקיע", type="primary"):
                 try:
-                    get_supabase().table("investors").insert({"fund_id": fund_id, "name": inv_name, "commitment": inv_commit}).execute()
+                    get_supabase().table("investors").insert({"name": inv_name, "commitment": inv_commit}).execute()
                     st.success("משקיע נוסף!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
     if not investors:
-        st.info("אין משקיעים מוגדרים לקרן זו. הוסף משקיע למעלה.")
+        st.info("אין משקיעים מוגדרים. הוסף משקיע למעלה.")
         return
 
     st.divider()
     st.markdown("### טבלת משקיעים (סמן V להעברה)")
 
-    # Build Dataframe for Data Editor
     data = []
     col_mapping = {}
     total_fund_commitment = 0
@@ -472,7 +461,7 @@ def show_investors():
         disabled=["שם משקיע", "התחייבות"],
         hide_index=True,
         use_container_width=True,
-        key=f"lp_editor_{fund_id}"
+        key="lp_global_editor"
     )
 
     if st.button("💾 שמור סטטוס העברות", type="primary"):
@@ -498,9 +487,8 @@ def show_investors():
         except Exception as e:
             st.error(f"שגיאה בעדכון: {e}")
 
-    # --- SUMMARY TOTALS SECTION ---
     st.divider()
-    st.markdown("### 📊 סיכום גביה לקריאות")
+    st.markdown("### 📊 סיכום גביה לקריאות (FOF Level)")
     
     col_sum1, col_sum2 = st.columns([1, 3])
     with col_sum1:
@@ -513,7 +501,6 @@ def show_investors():
                 call_pct = c["call_pct"] / 100.0
                 total_called_amount = total_fund_commitment * call_pct
                 
-                # Calculate total paid amount
                 paid_commit = 0
                 for inv in investors:
                     payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
@@ -535,7 +522,7 @@ def show_investors():
 
     st.divider()
     st.markdown("### ➕ קריאה חדשה לכסף (Capital Call)")
-    with st.form("new_lp_call"):
+    with st.form("new_global_lp_call"):
         c1, c2, c3 = st.columns([2, 2, 1])
         with c1:
             new_call_date = st.date_input("תאריך קריאה")
@@ -548,7 +535,6 @@ def show_investors():
         if submitted:
             try:
                 get_supabase().table("lp_calls").insert({
-                    "fund_id": fund_id,
                     "call_date": str(new_call_date),
                     "call_pct": new_call_pct
                 }).execute()
@@ -970,17 +956,17 @@ def show_pipeline():
         with st.expander(f"{priority_emoji} {fund['name']} | {fund.get('strategy','')} | סגירה: {fund.get('target_close_date','')}", expanded=False):
             col_a, col_b, col_c = st.columns([1, 1, 4])
             with col_a:
-                if st.button("✏️ עריכה", key=f"edit_{fid}"):
+                if st.button("✏️ עריכה", key=f"edit_btn_{fid}"):
                     st.session_state[f"editing_{fid}"] = True
             with col_b:
-                if st.button("🗑️ מחיקה", key=f"del_{fid}"):
+                if st.button("🗑️ מחיקה", key=f"del_btn_{fid}"):
                     st.session_state[f"confirm_delete_{fid}"] = True
 
             if st.session_state.get(f"confirm_delete_{fid}"):
                 st.warning(f"⚠️ למחוק את '{fund['name']}'? פעולה זו תמחק גם את כל משימות הגאנט.")
                 col_yes, col_no = st.columns(2)
                 with col_yes:
-                    if st.button("✅ כן, מחק", key=f"yes_{fid}", type="primary"):
+                    if st.button("✅ כן, מחק", key=f"yes_btn_{fid}", type="primary"):
                         try:
                             sb = get_supabase()
                             sb.table("gantt_tasks").delete().eq("pipeline_fund_id", fid).execute()
@@ -991,7 +977,7 @@ def show_pipeline():
                         except Exception as e:
                             st.error(f"שגיאה: {e}")
                 with col_no:
-                    if st.button("❌ ביטול", key=f"no_{fid}"):
+                    if st.button("❌ ביטול", key=f"no_btn_{fid}"):
                         st.session_state.pop(f"confirm_delete_{fid}", None)
                         st.rerun()
 
@@ -1016,12 +1002,12 @@ def show_pipeline():
                         cur_priority = fund.get("priority","medium")
                         new_priority = st.selectbox("עדיפות", priority_opts,
                             index=priority_opts.index(cur_priority) if cur_priority in priority_opts else 1)
-                        import datetime
+                        
                         cur_date = fund.get("target_close_date")
                         try:
-                            default_date = datetime.date.fromisoformat(str(cur_date)) if cur_date else datetime.date.today()
+                            default_date = datetime.fromisoformat(str(cur_date)).date() if cur_date else date.today()
                         except:
-                            default_date = datetime.date.today()
+                            default_date = date.today()
                         new_close = st.date_input("תאריך סגירה", value=default_date)
                     new_notes = st.text_area("הערות", value=fund.get("notes","") or "")
                     col_save, col_cancel = st.columns(2)
@@ -1061,7 +1047,6 @@ def show_pipeline():
 
 def show_gantt(tasks, fund):
     import plotly.graph_objects as go
-    from datetime import datetime, date
 
     CAT_CONFIG = {
         "Analysis": {"icon": "🟢", "color": "#16a34a", "bg": "#052e16"},
@@ -1107,7 +1092,7 @@ def show_gantt(tasks, fund):
     """, unsafe_allow_html=True)
 
     gantt_tasks_data = []
-    today = date.today()
+    today_dt = date.today()
     for t in tasks:
         if t.get("start_date") and t.get("due_date"):
             cat = t.get("category", "Admin")
@@ -1136,9 +1121,9 @@ def show_gantt(tasks, fund):
         sorted_tasks = sorted(gantt_tasks_data, key=lambda x: x["Start"], reverse=True)
 
         for i, t in enumerate(sorted_tasks):
-            start_dt = datetime.fromisoformat(t["Start"])
-            finish_dt = datetime.fromisoformat(t["Finish"])
-            duration_ms = (finish_dt - start_dt).total_seconds() * 1000
+            start_dt_val = datetime.fromisoformat(t["Start"])
+            finish_dt_val = datetime.fromisoformat(t["Finish"])
+            duration_ms = (finish_dt_val - start_dt_val).total_seconds() * 1000
 
             fig.add_trace(go.Bar(
                 x=[duration_ms],
@@ -1156,12 +1141,12 @@ def show_gantt(tasks, fund):
             
         fig.add_shape(
             type="line",
-            x0=str(today), x1=str(today),
+            x0=str(today_dt), x1=str(today_dt),
             y0=0, y1=1, yref="paper",
             line=dict(color="#f59e0b", width=2, dash="dash"),
         )
         fig.add_annotation(
-            x=str(today), y=1, yref="paper",
+            x=str(today_dt), y=1, yref="paper",
             text="היום", showarrow=False,
             font=dict(color="#f59e0b", size=13),
             yanchor="bottom"
@@ -1179,10 +1164,10 @@ def show_gantt(tasks, fund):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("##### 📋 משימות לפי קטגוריה")
+    st.markdown("##### 📋 משימות לפי קטגוריה (ניתן לערוך תאריכים וסטטוס)")
     col_f1, col_f2 = st.columns([3, 1])
     with col_f2:
-        show_done = st.toggle("הצג הושלם", value=False, key=f"show_done_{fid}")
+        show_done = st.toggle("הצג הושלם", value=False, key=f"show_done_toggle_{fid}")
 
     cats_order = ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"]
     for cat in cats_order:
@@ -1209,9 +1194,15 @@ def show_gantt(tasks, fund):
         for t in visible:
             status = t.get("status", "todo")
             scfg = STATUS_CONFIG.get(status, STATUS_CONFIG["todo"])
-            due = t.get("due_date", "")
+            
+            # Parse dates safely
+            try:
+                current_start = datetime.fromisoformat(t["start_date"]).date() if t.get("start_date") else date.today()
+                current_due = datetime.fromisoformat(t["due_date"]).date() if t.get("due_date") else date.today()
+            except:
+                current_start, current_due = date.today(), date.today()
 
-            col1, col2, col3 = st.columns([4, 1, 1])
+            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
             with col1:
                 st.markdown(
                     f'<div style="padding:4px 0;color:{"#64748b" if status=="done" else "#e2e8f0"};">'
@@ -1219,21 +1210,29 @@ def show_gantt(tasks, fund):
                     unsafe_allow_html=True
                 )
             with col2:
-                st.caption(due)
+                new_start = st.date_input("התחלה", value=current_start, key=f"start_{fid}_{t['id']}", label_visibility="collapsed")
             with col3:
+                new_due = st.date_input("סיום", value=current_due, key=f"due_{fid}_{t['id']}", label_visibility="collapsed")
+            with col4:
                 new_status = st.selectbox(
                     "סטטוס",
                     STATUS_LIST,
                     index=STATUS_LIST.index(status) if status in STATUS_LIST else 0,
-                    key=f"task_{t['id']}",
+                    key=f"status_{fid}_{t['id']}",
                     label_visibility="collapsed"
                 )
-                if new_status != status:
-                    try:
-                        sb.table("gantt_tasks").update({"status": new_status}).eq("id", t["id"]).execute()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"שגיאה: {e}")
+                
+            # Update DB if anything changed
+            if new_status != status or str(new_start) != t.get("start_date") or str(new_due) != t.get("due_date"):
+                try:
+                    sb.table("gantt_tasks").update({
+                        "status": new_status,
+                        "start_date": str(new_start),
+                        "due_date": str(new_due)
+                    }).eq("id", t["id"]).execute()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"שגיאה בעדכון משימה: {e}")
 
 def show_reports():
     st.title("📈 דוחות רבעוניים")
