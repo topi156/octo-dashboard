@@ -1,12 +1,72 @@
 """
-OCTO FUND DASHBOARD v2 - app.py
-Full Supabase integration
+OCTO FUND DASHBOARD v3 - app.py
+Full Supabase integration + PDF AI Analysis via OpenRouter
 """
 
 import streamlit as st
 import hashlib
 import pandas as pd
+import json
+import base64
+import requests
 from supabase import create_client, Client
+
+OPENROUTER_API_KEY = "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"
+
+def analyze_pdf_with_ai(pdf_bytes: bytes) -> dict:
+    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+    prompt = """You are a private equity analyst. Analyze this fund presentation PDF and extract the following information.
+Return ONLY a valid JSON object with these exact keys (use null if not found):
+{
+  "fund_name": "full fund name",
+  "manager": "management company name",
+  "strategy": "one of: PE, Credit, Infrastructure, Real Estate, Hedge, Venture",
+  "fund_size_target": null,
+  "fund_size_hard_cap": null,
+  "currency": "USD",
+  "target_return_moic_low": null,
+  "target_return_moic_high": null,
+  "target_irr_gross": null,
+  "vintage_year": null,
+  "mgmt_fee_pct": null,
+  "carried_interest_pct": null,
+  "preferred_return_pct": null,
+  "geographic_focus": null,
+  "sector_focus": null,
+  "portfolio_companies_target": null,
+  "aum_manager": null,
+  "key_highlights": null
+}
+fund_size_target and fund_size_hard_cap are numbers in millions USD.
+target_irr_gross is a number like 25 (for 25%).
+aum_manager is in billions.
+Return ONLY the JSON, no markdown, no extra text."""
+
+    payload = {
+        "model": "anthropic/claude-3.5-sonnet",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{pdf_b64}"}}
+            ]
+        }],
+        "max_tokens": 1500
+    }
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://octo-dashboard.streamlit.app"
+    }
+    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=90)
+    if resp.status_code != 200:
+        raise Exception(f"OpenRouter error {resp.status_code}: {resp.text[:300]}")
+    content = resp.json()["choices"][0]["message"]["content"].strip()
+    if "```" in content:
+        content = content.split("```")[1]
+        if content.startswith("json"):
+            content = content[4:]
+    return json.loads(content.strip())
 
 st.set_page_config(
     page_title="ALT Group | Octo Dashboard",
@@ -415,55 +475,164 @@ def show_pipeline():
     st.title("🔍 קרנות Pipeline")
     pipeline = get_pipeline_funds()
 
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col2:
-        if st.button("➕ הוסף קרן Pipeline", type="primary"):
+        if st.button("➕ הוסף ידנית", use_container_width=True):
             st.session_state.show_add_pipeline = True
+            st.session_state.show_pdf_upload = False
+    with col3:
+        if st.button("📄 העלה PDF", type="primary", use_container_width=True):
+            st.session_state.show_pdf_upload = True
+            st.session_state.show_add_pipeline = False
 
+    # PDF UPLOAD & ANALYSIS
+    if st.session_state.get("show_pdf_upload"):
+        st.divider()
+        st.markdown("### 📄 ניתוח PDF אוטומטי")
+        uploaded_pdf = st.file_uploader("העלה מצגת קרן (PDF)", type=["pdf"], key="pdf_uploader")
+        
+        if uploaded_pdf:
+            if st.button("🤖 נתח עם AI", type="primary"):
+                with st.spinner("Claude מנתח את המצגת... (30-60 שניות)"):
+                    try:
+                        pdf_bytes = uploaded_pdf.read()
+                        result = analyze_pdf_with_ai(pdf_bytes)
+                        st.session_state.pdf_result = result
+                        st.success("✅ ניתוח הושלם!")
+                    except Exception as e:
+                        st.error(f"שגיאה: {e}")
+        
+        if st.session_state.get("pdf_result"):
+            r = st.session_state.pdf_result
+            st.divider()
+            st.markdown("### 📋 פרטים שנמצאו – אשר ועדכן")
+            
+            # Show highlights
+            if r.get("key_highlights"):
+                st.info(f"💡 {r.get('key_highlights')}")
+            
+            with st.form("pdf_pipeline_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    fund_name = st.text_input("שם הקרן", value=r.get("fund_name") or "")
+                    manager = st.text_input("מנהל", value=r.get("manager") or "")
+                    strategy_options = ["PE", "Credit", "Infrastructure", "Real Estate", "Hedge", "Venture"]
+                    ai_strategy = r.get("strategy", "PE")
+                    strategy_idx = strategy_options.index(ai_strategy) if ai_strategy in strategy_options else 0
+                    strategy = st.selectbox("אסטרטגיה", strategy_options, index=strategy_idx)
+                    geographic = st.text_input("מיקוד גיאוגרפי", value=r.get("geographic_focus") or "")
+                    sector = st.text_input("מיקוד סקטור", value=r.get("sector_focus") or "")
+
+                with col2:
+                    fund_size = r.get("fund_size_target") or 0
+                    target_commitment = st.number_input("יעד השקעה שלנו ($M)", min_value=0.0, value=0.0, step=0.5)
+                    currency = st.selectbox("מטבע", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
+                    target_close = st.date_input("תאריך סגירה משוער")
+                    priority = st.selectbox("עדיפות", ["high", "medium", "low"])
+                
+                st.divider()
+                st.markdown("**📊 נתוני הקרן (לתיעוד)**")
+                col3, col4, col5 = st.columns(3)
+                with col3:
+                    st.metric("גודל יעד", f"${fund_size:,.0f}M" if fund_size else "—")
+                    hard_cap = r.get("fund_size_hard_cap")
+                    st.metric("Hard Cap", f"${hard_cap:,.0f}M" if hard_cap else "—")
+                with col4:
+                    moic_low = r.get("target_return_moic_low")
+                    moic_high = r.get("target_return_moic_high")
+                    st.metric("MOIC יעד", f"{moic_low}x-{moic_high}x" if moic_low and moic_high else "—")
+                    irr = r.get("target_irr_gross")
+                    st.metric("IRR גלמי יעד", f"{irr}%" if irr else "—")
+                with col5:
+                    mgmt = r.get("mgmt_fee_pct")
+                    carry = r.get("carried_interest_pct")
+                    hurdle = r.get("preferred_return_pct")
+                    st.metric("דמי ניהול", f"{mgmt}%" if mgmt else "—")
+                    st.metric("Carry / Hurdle", f"{carry}% / {hurdle}%" if carry and hurdle else "—")
+
+                notes_default = f"גודל קרן: ${fund_size:,.0f}M | MOIC: {moic_low}x-{moic_high}x | IRR: {irr}% | מנהל AUM: ${r.get('aum_manager', 0)}B" if fund_size else ""
+                notes = st.text_area("הערות", value=notes_default)
+
+                if st.form_submit_button("✅ צור קרן Pipeline + גאנט", type="primary"):
+                    try:
+                        sb = get_supabase()
+                        res = sb.table("pipeline_funds").insert({
+                            "name": fund_name,
+                            "manager": manager,
+                            "strategy": strategy,
+                            "target_commitment": target_commitment * 1_000_000,
+                            "currency": currency,
+                            "target_close_date": str(target_close),
+                            "priority": priority,
+                            "notes": notes
+                        }).execute()
+                        fund_id = res.data[0]["id"]
+                        try:
+                            sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
+                        except:
+                            pass
+                        st.success(f"✅ קרן '{fund_name}' נוצרה!")
+                        st.session_state.pdf_result = None
+                        st.session_state.show_pdf_upload = False
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"שגיאה: {e}")
+
+    # MANUAL ADD
     if st.session_state.get("show_add_pipeline"):
-        with st.form("add_pipeline"):
-            st.markdown("### קרן חדשה")
+        st.divider()
+        with st.form("add_pipeline_manual"):
+            st.markdown("### ➕ הוספה ידנית")
             col1, col2 = st.columns(2)
             with col1:
                 name = st.text_input("שם הקרן")
                 manager = st.text_input("מנהל")
-                strategy = st.selectbox("אסטרטגיה", ["PE", "Credit", "Infrastructure", "Real Estate", "Hedge"])
+                strategy = st.selectbox("אסטרטגיה", ["PE", "Credit", "Infrastructure", "Real Estate", "Hedge", "Venture"])
             with col2:
                 target_commitment = st.number_input("יעד השקעה", min_value=0.0)
                 currency = st.selectbox("מטבע", ["USD", "EUR"])
-                target_close = st.date_input("תאריך סגירה יעד")
+                target_close = st.date_input("תאריך סגירה")
                 priority = st.selectbox("עדיפות", ["high", "medium", "low"])
-
-            if st.form_submit_button("צור קרן + גאנט אוטומטי", type="primary"):
+            notes = st.text_area("הערות")
+            if st.form_submit_button("צור קרן + גאנט", type="primary"):
                 try:
                     sb = get_supabase()
                     res = sb.table("pipeline_funds").insert({
                         "name": name, "manager": manager, "strategy": strategy,
                         "target_commitment": target_commitment, "currency": currency,
-                        "target_close_date": str(target_close), "priority": priority
+                        "target_close_date": str(target_close), "priority": priority, "notes": notes
                     }).execute()
                     fund_id = res.data[0]["id"]
-                    sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
-                    st.success(f"✅ קרן '{name}' נוצרה עם 19 משימות גאנט!")
+                    try:
+                        sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
+                    except:
+                        pass
+                    st.success(f"✅ קרן '{name}' נוצרה!")
                     st.session_state.show_add_pipeline = False
                     st.rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
+    st.divider()
+
     if not pipeline:
-        st.info("אין קרנות pipeline. לחץ 'הוסף קרן Pipeline' להתחיל.")
+        st.info("אין קרנות pipeline. לחץ 'העלה PDF' או 'הוסף ידנית'.")
         return
 
     for fund in pipeline:
-        with st.expander(f"📋 {fund['name']} | {fund.get('strategy','')} | סגירה: {fund.get('target_close_date','')}", expanded=True):
+        with st.expander(f"📋 {fund['name']} | {fund.get('strategy','')} | {fund.get('priority','').upper()} | סגירה: {fund.get('target_close_date','')}", expanded=False):
             col1, col2, col3 = st.columns(3)
             currency_sym = "€" if fund.get("currency") == "EUR" else "$"
             with col1:
-                st.metric("יעד השקעה", f"{currency_sym}{fund.get('target_commitment',0):,.0f}")
+                commitment = fund.get("target_commitment") or 0
+                st.metric("יעד השקעה", f"{currency_sym}{commitment:,.0f}" if commitment else "—")
             with col2:
                 st.metric("תאריך סגירה", str(fund.get("target_close_date", "")))
             with col3:
                 st.metric("עדיפות", fund.get("priority", "").upper())
+            
+            if fund.get("notes"):
+                st.caption(f"📝 {fund['notes']}")
 
             tasks = get_gantt_tasks(fund["id"])
             if tasks:
