@@ -13,45 +13,60 @@ from supabase import create_client, Client
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
-    """Extract text from PDF using pymupdf."""
+    """Extract text from PDF - takes full text with smart truncation."""
     import fitz  # pymupdf
-    import io
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text()
+    
+    # Extract all pages
+    pages_text = []
+    for i, page in enumerate(doc):
+        text = page.get_text().strip()
+        if text:
+            pages_text.append(f"--- Page {i+1} ---\n{text}")
     doc.close()
-    # Limit to first 8000 chars to avoid token limits
-    return text[:8000]
+    
+    full_text = "\n".join(pages_text)
+    
+    # If short enough, return all
+    if len(full_text) <= 12000:
+        return full_text
+    
+    # Otherwise: take first 4000 chars + last 8000 chars (terms/performance usually at end)
+    return full_text[:4000] + "\n\n[...]\n\n" + full_text[-8000:]
 
 def analyze_pdf_with_ai(pdf_bytes: bytes) -> dict:
     pdf_text = extract_pdf_text(pdf_bytes)
     
-    prompt = f"""You are a private equity analyst. Analyze this fund presentation text and extract key information.
-Return ONLY a valid JSON object with these exact keys (use null if not found):
+    prompt = f"""You are an expert private equity analyst. Carefully analyze this fund presentation and extract ALL available information.
+Be thorough - search the entire text for financial terms, fees, returns, geography, and strategy details.
+
+Return ONLY a valid JSON object with these exact keys (use null only if truly not found anywhere):
 {{
-  "fund_name": "full fund name",
+  "fund_name": "full fund name including fund number",
   "manager": "management company name",
   "strategy": "one of: PE, Credit, Infrastructure, Real Estate, Hedge, Venture",
-  "fund_size_target": null,
-  "fund_size_hard_cap": null,
-  "currency": "USD",
-  "target_return_moic_low": null,
-  "target_return_moic_high": null,
-  "target_irr_gross": null,
-  "vintage_year": null,
-  "mgmt_fee_pct": null,
-  "carried_interest_pct": null,
-  "preferred_return_pct": null,
-  "geographic_focus": null,
-  "sector_focus": null,
-  "portfolio_companies_target": null,
-  "aum_manager": null,
-  "key_highlights": null
+  "fund_size_target": number in millions USD (e.g. 2500 for $2.5B),
+  "fund_size_hard_cap": number in millions USD or null,
+  "currency": "USD or EUR",
+  "target_return_moic_low": number (e.g. 3.0) - look for '3x to 5x', 'base case returns',
+  "target_return_moic_high": number (e.g. 5.0),
+  "target_irr_gross": number as percentage (e.g. 25) - look for 'gross IRR', 'target IRR',
+  "target_irr_net": number as percentage or null,
+  "vintage_year": number (year) or null,
+  "fund_life_years": number or null,
+  "investment_period_years": number or null,
+  "mgmt_fee_pct": number (e.g. 2.0) - look for 'management fee', '2%',
+  "carried_interest_pct": number (e.g. 20) - look for 'carried interest', 'carry',
+  "preferred_return_pct": number (e.g. 8) - look for 'preferred return', 'hurdle',
+  "geographic_focus": "specific description e.g. United States, North America, Global",
+  "sector_focus": "specific sectors e.g. Technology, Healthcare, Consumer, AI",
+  "portfolio_companies_target": number of investments planned or null,
+  "max_single_investment_pct": number (e.g. 15) - look for max per investment,
+  "aum_manager": number in billions (e.g. 33.3) - look for 'AUM', 'assets under management',
+  "key_highlights": "3-4 sentence summary of the fund investment thesis and differentiators"
 }}
-fund_size_target and fund_size_hard_cap are numbers in millions USD.
-target_irr_gross is a number like 25 (for 25%).
-aum_manager is in billions.
+
+IMPORTANT: Fund size in billions -> convert to millions. E.g. $2.5B = 2500.
 Return ONLY the JSON, no markdown, no extra text.
 
 FUND PRESENTATION TEXT:
@@ -60,7 +75,7 @@ FUND PRESENTATION TEXT:
     payload = {
         "model": "anthropic/claude-3.5-sonnet",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1500
+        "max_tokens": 2000
     }
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -336,7 +351,8 @@ def show_fund_detail(fund):
     uncalled = commitment - total_called
     currency_sym = "€" if fund.get("currency") == "EUR" else "$"
 
-    col1, col2, col3, col4 = st.columns(4)
+    # Fund header + edit/delete buttons
+    col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
     with col1:
         st.metric("התחייבות", f"{currency_sym}{commitment:,.0f}" if commitment else "—")
     with col2:
@@ -346,6 +362,75 @@ def show_fund_detail(fund):
         st.metric("יתרה לא נקראה", f"{currency_sym}{uncalled:,.0f}" if commitment else "—")
     with col4:
         st.metric("סה״כ חולק", f"{currency_sym}{total_dist:,.0f}")
+    with col_edit:
+        if st.button("✏️ עריכה", key=f"edit_fund_{fund['id']}"):
+            st.session_state[f"editing_fund_{fund['id']}"] = True
+    with col_del:
+        if st.button("🗑️ מחיקה", key=f"del_fund_{fund['id']}"):
+            st.session_state[f"confirm_del_fund_{fund['id']}"] = True
+
+    # Confirm delete fund
+    if st.session_state.get(f"confirm_del_fund_{fund['id']}"):
+        st.warning(f"⚠️ למחוק את '{fund['name']}'? יימחקו גם כל ה-Calls, Distributions ודוחות.")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ כן, מחק הכל", key=f"yes_fund_{fund['id']}", type="primary"):
+                try:
+                    sb = get_supabase()
+                    sb.table("capital_calls").delete().eq("fund_id", fund["id"]).execute()
+                    sb.table("distributions").delete().eq("fund_id", fund["id"]).execute()
+                    sb.table("quarterly_reports").delete().eq("fund_id", fund["id"]).execute()
+                    sb.table("funds").delete().eq("id", fund["id"]).execute()
+                    st.success("נמחק!")
+                    st.session_state.pop(f"confirm_del_fund_{fund['id']}", None)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
+        with c2:
+            if st.button("❌ ביטול", key=f"no_fund_{fund['id']}"):
+                st.session_state.pop(f"confirm_del_fund_{fund['id']}", None)
+                st.rerun()
+
+    # Edit fund form
+    if st.session_state.get(f"editing_fund_{fund['id']}"):
+        with st.form(f"edit_fund_form_{fund['id']}"):
+            st.markdown("**✏️ עריכת פרטי קרן**")
+            col1, col2 = st.columns(2)
+            with col1:
+                new_name = st.text_input("שם הקרן", value=fund.get("name",""))
+                new_manager = st.text_input("מנהל", value=fund.get("manager","") or "")
+                strategy_opts = ["PE","Credit","Infrastructure","Real Estate","Hedge","Venture"]
+                cur_s = fund.get("strategy","PE")
+                new_strategy = st.selectbox("אסטרטגיה", strategy_opts,
+                    index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
+            with col2:
+                new_commitment = st.number_input("התחייבות", value=float(commitment), min_value=0.0)
+                cur_cur = fund.get("currency","USD")
+                new_currency = st.selectbox("מטבע", ["USD","EUR"], index=0 if cur_cur=="USD" else 1)
+                status_opts = ["active","closed","exited"]
+                cur_st = fund.get("status","active")
+                new_status = st.selectbox("סטטוס", status_opts,
+                    index=status_opts.index(cur_st) if cur_st in status_opts else 0)
+                new_vintage = st.number_input("ויינטג'", value=int(fund.get("vintage_year") or 2020), min_value=2000, max_value=2030)
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.form_submit_button("💾 שמור", type="primary"):
+                    try:
+                        get_supabase().table("funds").update({
+                            "name": new_name, "manager": new_manager,
+                            "strategy": new_strategy, "commitment": new_commitment,
+                            "currency": new_currency, "status": new_status,
+                            "vintage_year": new_vintage
+                        }).eq("id", fund["id"]).execute()
+                        st.success("✅ עודכן!")
+                        st.session_state.pop(f"editing_fund_{fund['id']}", None)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"שגיאה: {e}")
+            with c2:
+                if st.form_submit_button("❌ ביטול"):
+                    st.session_state.pop(f"editing_fund_{fund['id']}", None)
+                    st.rerun()
 
     st.divider()
 
@@ -354,19 +439,37 @@ def show_fund_detail(fund):
     # --- CAPITAL CALLS ---
     with tab1:
         if calls:
-            rows = []
+            st.markdown("**רשימת Calls**")
             for c in calls:
-                rows.append({
-                    "Call #": c.get("call_number"),
-                    "תאריך קבלה": c.get("call_date", ""),
-                    "תאריך תשלום": c.get("payment_date", ""),
-                    "סכום": f"{currency_sym}{c.get('amount',0):,.0f}",
-                    "השקעות": f"{currency_sym}{c.get('investments',0):,.0f}" if c.get("investments") else "—",
-                    "דמי ניהול": f"{currency_sym}{c.get('mgmt_fee',0):,.0f}" if c.get("mgmt_fee") else "—",
-                    "עתידי": "🔮" if c.get("is_future") else "✅",
-                    "הערות": c.get("notes", ""),
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                with st.expander(f"Call #{c.get('call_number')} | {c.get('payment_date','')} | {currency_sym}{c.get('amount',0):,.0f} {'🔮' if c.get('is_future') else '✅'}", expanded=False):
+                    col1, col2, col3 = st.columns([2,2,1])
+                    with col1:
+                        st.write(f"תאריך קבלה: {c.get('call_date','')}")
+                        st.write(f"תאריך תשלום: {c.get('payment_date','')}")
+                        st.write(f"סכום: {currency_sym}{c.get('amount',0):,.0f}")
+                    with col2:
+                        st.write(f"השקעות: {currency_sym}{c.get('investments',0):,.0f}" if c.get('investments') else "השקעות: —")
+                        st.write(f"דמי ניהול: {currency_sym}{c.get('mgmt_fee',0):,.0f}" if c.get('mgmt_fee') else "דמי ניהול: —")
+                        if c.get('notes'):
+                            st.write(f"הערות: {c.get('notes')}")
+                    with col3:
+                        if st.button("🗑️", key=f"del_call_{c['id']}", help="מחק Call"):
+                            st.session_state[f"confirm_del_call_{c['id']}"] = True
+                    
+                    if st.session_state.get(f"confirm_del_call_{c['id']}"):
+                        st.warning("למחוק Call זה?")
+                        cc1, cc2 = st.columns(2)
+                        with cc1:
+                            if st.button("✅ מחק", key=f"yes_call_{c['id']}"):
+                                try:
+                                    get_supabase().table("capital_calls").delete().eq("id", c["id"]).execute()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"שגיאה: {e}")
+                        with cc2:
+                            if st.button("❌ ביטול", key=f"no_call_{c['id']}"):
+                                st.session_state.pop(f"confirm_del_call_{c['id']}", None)
+                                st.rerun()
 
             # Bar chart
             import plotly.express as px
@@ -425,9 +528,30 @@ def show_fund_detail(fund):
     # --- DISTRIBUTIONS ---
     with tab2:
         if dists:
-            rows = [{"Dist #": d.get("dist_number"), "תאריך": d.get("dist_date"), 
-                     "סכום": f"{currency_sym}{d.get('amount',0):,.0f}", "סוג": d.get("dist_type","")} for d in dists]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.markdown("**רשימת Distributions**")
+            for d in dists:
+                with st.expander(f"Dist #{d.get('dist_number')} | {d.get('dist_date','')} | {currency_sym}{d.get('amount',0):,.0f}", expanded=False):
+                    col1, col2 = st.columns([4,1])
+                    with col1:
+                        st.write(f"סוג: {d.get('dist_type','')} | סכום: {currency_sym}{d.get('amount',0):,.0f}")
+                    with col2:
+                        if st.button("🗑️", key=f"del_dist_{d['id']}", help="מחק Distribution"):
+                            st.session_state[f"confirm_del_dist_{d['id']}"] = True
+                    
+                    if st.session_state.get(f"confirm_del_dist_{d['id']}"):
+                        st.warning("למחוק Distribution זה?")
+                        dc1, dc2 = st.columns(2)
+                        with dc1:
+                            if st.button("✅ מחק", key=f"yes_dist_{d['id']}"):
+                                try:
+                                    get_supabase().table("distributions").delete().eq("id", d["id"]).execute()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"שגיאה: {e}")
+                        with dc2:
+                            if st.button("❌ ביטול", key=f"no_dist_{d['id']}"):
+                                st.session_state.pop(f"confirm_del_dist_{d['id']}", None)
+                                st.rerun()
         else:
             st.info("אין חלוקות עדיין")
 
@@ -458,9 +582,32 @@ def show_fund_detail(fund):
     # --- PERFORMANCE ---
     with tab3:
         if reports:
-            rows = [{"שנה": r["year"], "רבעון": f"Q{r['quarter']}", "NAV": r.get("nav"),
-                     "TVPI": r.get("tvpi"), "DPI": r.get("dpi"), "IRR %": r.get("irr")} for r in reports]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.markdown("**דוחות רבעוניים**")
+            for r in reports:
+                with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
+                    col1, col2 = st.columns([4,1])
+                    with col1:
+                        st.write(f"NAV: {currency_sym}{r.get('nav',0):,.0f} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
+                        if r.get('notes'):
+                            st.write(f"הערות: {r.get('notes')}")
+                    with col2:
+                        if st.button("🗑️", key=f"del_rep_{r['id']}", help="מחק דוח"):
+                            st.session_state[f"confirm_del_rep_{r['id']}"] = True
+
+                    if st.session_state.get(f"confirm_del_rep_{r['id']}"):
+                        st.warning("למחוק דוח זה?")
+                        rc1, rc2 = st.columns(2)
+                        with rc1:
+                            if st.button("✅ מחק", key=f"yes_rep_{r['id']}"):
+                                try:
+                                    get_supabase().table("quarterly_reports").delete().eq("id", r["id"]).execute()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"שגיאה: {e}")
+                        with rc2:
+                            if st.button("❌ ביטול", key=f"no_rep_{r['id']}"):
+                                st.session_state.pop(f"confirm_del_rep_{r['id']}", None)
+                                st.rerun()
 
             import plotly.graph_objects as go
             if len(reports) > 1:
@@ -470,7 +617,7 @@ def show_fund_detail(fund):
                     fig.add_trace(go.Scatter(x=labels, y=[r.get("tvpi") for r in reports], name="TVPI", line=dict(color="#4ade80")))
                 if any(r.get("dpi") for r in reports):
                     fig.add_trace(go.Scatter(x=labels, y=[r.get("dpi") for r in reports], name="DPI", line=dict(color="#60a5fa")))
-                fig.update_layout(title="ביצועים לאורך זמן", paper_bgcolor='rgba(0,0,0,0)', 
+                fig.update_layout(title="ביצועים לאורך זמן", paper_bgcolor='rgba(0,0,0,0)',
                                   plot_bgcolor='rgba(0,0,0,0)', font_color='white')
                 st.plotly_chart(fig, use_container_width=True)
         else:
