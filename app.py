@@ -882,65 +882,172 @@ def show_pipeline():
                     show_gantt(tasks, fund)
 
 def show_gantt(tasks, fund):
-    import plotly.figure_factory as ff
-    from datetime import datetime
+    import plotly.graph_objects as go
+    from datetime import datetime, date
 
-    categories = {"legal": "🔵 Legal", "tax": "🔴 Tax", "analysis": "🟢 Analysis", "admin": "🟡 Admin"}
-    colors = {"🔵 Legal": "#0f3460", "🔴 Tax": "#e94560", "🟢 Analysis": "#0a7c59", "🟡 Admin": "#7c5200"}
+    CAT_CONFIG = {
+        "Analysis": {"icon": "🟢", "color": "#16a34a", "bg": "#052e16"},
+        "Legal":    {"icon": "🔵", "color": "#2563eb", "bg": "#0c1a4b"},
+        "Tax":      {"icon": "🔴", "color": "#dc2626", "bg": "#3b0a0a"},
+        "Admin":    {"icon": "🟡", "color": "#ca8a04", "bg": "#2d2000"},
+        "IC":       {"icon": "🟣", "color": "#9333ea", "bg": "#2d0a4b"},
+        "DD":       {"icon": "🟠", "color": "#ea580c", "bg": "#3b1a00"},
+    }
+    STATUS_CONFIG = {
+        "todo":        {"icon": "⬜", "label": "ממתין",     "color": "#64748b"},
+        "in_progress": {"icon": "🔄", "label": "בביצוע",    "color": "#3b82f6"},
+        "done":        {"icon": "✅", "label": "הושלם",     "color": "#22c55e"},
+        "blocked":     {"icon": "🚫", "label": "חסום",      "color": "#ef4444"},
+    }
+    STATUS_LIST = ["todo", "in_progress", "done", "blocked"]
 
-    # Status filter
-    status_filter = st.multiselect(
-        "סטטוס", ["todo", "in_progress", "done", "blocked"],
-        default=["todo", "in_progress", "blocked"],
-        key=f"filter_{fund['id']}"
-    )
-    filtered = [t for t in tasks if t.get("status") in status_filter] if status_filter else tasks
-
-    # Gantt
-    gantt_tasks = []
-    for t in filtered:
-        if t.get("start_date") and t.get("due_date"):
-            try:
-                gantt_tasks.append(dict(
-                    Task=t["task_name"],
-                    Start=t["start_date"],
-                    Finish=t["due_date"],
-                    Resource=categories.get(t.get("category",""), t.get("category",""))
-                ))
-            except:
-                pass
-
-    if gantt_tasks:
-        try:
-            fig = ff.create_gantt(gantt_tasks, colors=colors, index_col="Resource",
-                                  show_colorbar=True, group_tasks=False)
-            fig.update_layout(height=400, paper_bgcolor='rgba(0,0,0,0)',
-                              plot_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.warning(f"גאנט לא זמין: {e}")
-
-    # Checklist
-    st.markdown("**📋 צ'קליסט משימות**")
     sb = get_supabase()
-    for cat, cat_label in categories.items():
-        cat_tasks = [t for t in tasks if t.get("category") == cat]
+    fid = fund["id"]
+
+    # ── Summary bar ──────────────────────────────────────────
+    total = len(tasks)
+    done_n = sum(1 for t in tasks if t.get("status") == "done")
+    in_prog = sum(1 for t in tasks if t.get("status") == "in_progress")
+    blocked_n = sum(1 for t in tasks if t.get("status") == "blocked")
+    pct = int(done_n / total * 100) if total else 0
+
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border-radius:12px;padding:16px 20px;margin:12px 0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <span style="color:#94a3b8;font-size:13px;">התקדמות כללית</span>
+            <span style="color:#4ade80;font-weight:700;font-size:18px;">{pct}%</span>
+        </div>
+        <div style="background:#0f172a;border-radius:6px;height:8px;overflow:hidden;">
+            <div style="background:linear-gradient(90deg,#16a34a,#4ade80);width:{pct}%;height:100%;border-radius:6px;transition:width 0.5s;"></div>
+        </div>
+        <div style="display:flex;gap:20px;margin-top:12px;">
+            <span style="color:#4ade80;font-size:12px;">✅ הושלם: {done_n}</span>
+            <span style="color:#3b82f6;font-size:12px;">🔄 בביצוע: {in_prog}</span>
+            <span style="color:#ef4444;font-size:12px;">🚫 חסום: {blocked_n}</span>
+            <span style="color:#64748b;font-size:12px;">⬜ ממתין: {total - done_n - in_prog - blocked_n}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Gantt chart ───────────────────────────────────────────
+    gantt_tasks_data = []
+    today = date.today()
+    for t in tasks:
+        if t.get("start_date") and t.get("due_date"):
+            cat = t.get("category", "Admin")
+            cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
+            status = t.get("status", "todo")
+            # Color by status if done/blocked, else by category
+            if status == "done":
+                bar_color = "#22c55e"
+            elif status == "blocked":
+                bar_color = "#ef4444"
+            elif status == "in_progress":
+                bar_color = "#3b82f6"
+            else:
+                bar_color = cfg["color"]
+            gantt_tasks_data.append({
+                "Task": f"{cfg['icon']} {t['task_name']}",
+                "Start": t["start_date"],
+                "Finish": t["due_date"],
+                "Color": bar_color,
+                "Category": cat,
+                "Status": STATUS_CONFIG.get(status, {}).get("label", status),
+            })
+
+    if gantt_tasks_data:
+        fig = go.Figure()
+        for i, t in enumerate(reversed(gantt_tasks_data)):
+            fig.add_trace(go.Bar(
+                x=[(datetime.fromisoformat(t["Finish"]) - datetime.fromisoformat(t["Start"])).days],
+                y=[t["Task"]],
+                base=[t["Start"]],
+                orientation="h",
+                marker=dict(color=t["Color"], opacity=0.85, line=dict(width=0)),
+                hovertemplate=f"<b>{t['Task']}</b><br>{t['Start']} → {t['Finish']}<br>סטטוס: {t['Status']}<extra></extra>",
+                showlegend=False,
+            ))
+        # Today line
+        fig.add_vline(x=str(today), line_dash="dash", line_color="#f59e0b", line_width=1.5,
+                      annotation_text="היום", annotation_font_color="#f59e0b", annotation_font_size=11)
+        fig.update_layout(
+            height=max(300, len(gantt_tasks_data) * 28 + 80),
+            barmode="overlay",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="#0f172a",
+            font=dict(color="#e2e8f0", size=11, family="Heebo"),
+            margin=dict(l=10, r=20, t=20, b=30),
+            xaxis=dict(
+                type="date",
+                gridcolor="#1e293b",
+                tickformat="%d/%m/%y",
+                tickfont=dict(size=10),
+            ),
+            yaxis=dict(
+                gridcolor="#1e293b",
+                tickfont=dict(size=11),
+                automargin=True,
+            ),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Checklist by category ─────────────────────────────────
+    st.markdown("##### 📋 משימות לפי קטגוריה")
+
+    # Filter
+    col_f1, col_f2 = st.columns([3, 1])
+    with col_f2:
+        show_done = st.toggle("הצג הושלם", value=False, key=f"show_done_{fid}")
+
+    cats_order = ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"]
+    for cat in cats_order:
+        cat_tasks = [t for t in tasks if t.get("category","").lower() == cat.lower()
+                     or t.get("category","") == cat]
         if not cat_tasks:
             continue
-        done = sum(1 for t in cat_tasks if t.get("status") == "done")
-        st.markdown(f"**{cat_label}** ({done}/{len(cat_tasks)})")
-        for t in cat_tasks:
-            col1, col2, col3 = st.columns([3, 1, 1])
+        if not show_done:
+            visible = [t for t in cat_tasks if t.get("status") != "done"]
+        else:
+            visible = cat_tasks
+
+        if not visible and not show_done:
+            continue
+
+        cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
+        done_c = sum(1 for t in cat_tasks if t.get("status") == "done")
+        cat_pct = int(done_c / len(cat_tasks) * 100)
+
+        st.markdown(f"""
+        <div style="background:{cfg['bg']};border-left:3px solid {cfg['color']};
+                    border-radius:8px;padding:10px 14px;margin:8px 0 4px 0;
+                    display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:{cfg['color']};font-weight:600;">{cfg['icon']} {cat}</span>
+            <span style="color:#94a3b8;font-size:12px;">{done_c}/{len(cat_tasks)} · {cat_pct}%</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        for t in visible:
+            status = t.get("status", "todo")
+            scfg = STATUS_CONFIG.get(status, STATUS_CONFIG["todo"])
+            due = t.get("due_date", "")
+
+            col1, col2, col3 = st.columns([4, 1, 1])
             with col1:
-                status_icon = {"todo": "⬜", "in_progress": "🔄", "done": "✅", "blocked": "🚫"}.get(t.get("status",""), "⬜")
-                st.markdown(f"{status_icon} {t['task_name']}")
+                st.markdown(
+                    f'<div style="padding:4px 0;color:{"#64748b" if status=="done" else "#e2e8f0"};">'
+                    f'{scfg["icon"]} {t["task_name"]}</div>',
+                    unsafe_allow_html=True
+                )
             with col2:
-                st.caption(t.get("due_date", ""))
+                st.caption(due)
             with col3:
-                new_status = st.selectbox("", ["todo", "in_progress", "done", "blocked"],
-                    index=["todo", "in_progress", "done", "blocked"].index(t.get("status","todo")),
-                    key=f"task_{t['id']}", label_visibility="collapsed")
-                if new_status != t.get("status"):
+                new_status = st.selectbox(
+                    "", STATUS_LIST,
+                    index=STATUS_LIST.index(status) if status in STATUS_LIST else 0,
+                    key=f"task_{t['id']}",
+                    label_visibility="collapsed"
+                )
+                if new_status != status:
                     try:
                         sb.table("gantt_tasks").update({"status": new_status}).eq("id", t["id"]).execute()
                         st.rerun()
