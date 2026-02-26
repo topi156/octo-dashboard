@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v3 - app.py
-Full Supabase integration + PDF AI Analysis via OpenRouter
+OCTO FUND DASHBOARD v3.2 - app.py
+Full Supabase integration + PDF AI Analysis via OpenRouter + LPs Management + Totals
 """
 
 import streamlit as st
@@ -8,9 +8,23 @@ import hashlib
 import pandas as pd
 import json
 import requests
+from datetime import datetime, date
 from supabase import create_client, Client
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
+
+def format_currency(amount: float, currency_sym: str = "$") -> str:
+    """מעצב סכומים גדולים לקריאה נוחה (M למיליונים, B למיליארדים)"""
+    if amount is None or amount == 0:
+        return "—"
+    if amount >= 1_000_000_000:
+        return f"{currency_sym}{amount/1_000_000_000:.2f}B"
+    elif amount >= 1_000_000:
+        return f"{currency_sym}{amount/1_000_000:.1f}M"
+    elif amount >= 1_000:
+        return f"{currency_sym}{amount/1_000:.0f}K"
+    else:
+        return f"{currency_sym}{amount:,.0f}"
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     import fitz
@@ -33,28 +47,28 @@ Be thorough - search the entire text for financial terms, fees, returns, geograp
 
 Return ONLY a valid JSON object with these exact keys (use null only if truly not found anywhere):
 {{
-  "fund_name": "full fund name including fund number",
-  "manager": "management company name",
-  "strategy": "one of: PE, Credit, Infrastructure, Real Estate, Hedge, Venture",
-  "fund_size_target": number in millions USD (e.g. 2500 for $2.5B),
-  "fund_size_hard_cap": number in millions USD or null,
-  "currency": "USD or EUR",
-  "target_return_moic_low": number (e.g. 3.0),
-  "target_return_moic_high": number (e.g. 5.0),
-  "target_irr_gross": number as percentage (e.g. 25),
-  "target_irr_net": number as percentage or null,
-  "vintage_year": number (year) or null,
-  "fund_life_years": number or null,
-  "investment_period_years": number or null,
-  "mgmt_fee_pct": number (e.g. 2.0),
-  "carried_interest_pct": number (e.g. 20),
-  "preferred_return_pct": number (e.g. 8),
-  "geographic_focus": "specific description e.g. United States, North America, Global",
-  "sector_focus": "specific sectors e.g. Technology, Healthcare, Consumer, AI",
-  "portfolio_companies_target": number of investments planned or null,
-  "max_single_investment_pct": number (e.g. 15) or null,
-  "aum_manager": number in billions (e.g. 33.3) or null,
-  "key_highlights": "3-4 sentence summary of the fund investment thesis and differentiators"
+"fund_name": "full fund name including fund number",
+"manager": "management company name",
+"strategy": "one of: PE, Credit, Infrastructure, Real Estate, Hedge, Venture",
+"fund_size_target": number in millions USD (e.g. 2500 for $2.5B),
+"fund_size_hard_cap": number in millions USD or null,
+"currency": "USD or EUR",
+"target_return_moic_low": number (e.g. 3.0),
+"target_return_moic_high": number (e.g. 5.0),
+"target_irr_gross": number as percentage (e.g. 25),
+"target_irr_net": number as percentage or null,
+"vintage_year": number (year) or null,
+"fund_life_years": number or null,
+"investment_period_years": number or null,
+"mgmt_fee_pct": number (e.g. 2.0),
+"carried_interest_pct": number (e.g. 20),
+"preferred_return_pct": number (e.g. 8),
+"geographic_focus": "specific description e.g. United States, North America, Global",
+"sector_focus": "specific sectors e.g. Technology, Healthcare, Consumer, AI",
+"portfolio_companies_target": number of investments planned or null,
+"max_single_investment_pct": number (e.g. 15) or null,
+"aum_manager": number in billions (e.g. 33.3) or null,
+"key_highlights": "3-4 sentence summary of the fund investment thesis and differentiators"
 }}
 
 IMPORTANT: Fund size in billions -> convert to millions. E.g. $2.5B = 2500.
@@ -122,8 +136,7 @@ st.markdown("""
         margin-bottom: 8px !important;
     }
 
-    /* ═══ Selectbox + Dropdown - COMPREHENSIVE DARK FIX ═══ */
-    /* Box itself */
+    /* Selectbox + Dropdown - COMPREHENSIVE DARK FIX */
     [data-testid="stSelectbox"] > div > div,
     [data-testid="stSelectbox"] > div > div > div,
     [data-testid="stSelectbox"] span { 
@@ -131,13 +144,9 @@ st.markdown("""
         color: #e2e8f0 !important;
         border-color: #334155 !important;
     }
-    /* BaseWeb popover container */
     [data-baseweb="popover"],
     [data-baseweb="popover"] > div,
-    [data-baseweb="popover"] > div > div {
-        background-color: #1e293b !important;
-    }
-    /* BaseWeb select menu */
+    [data-baseweb="popover"] > div > div { background-color: #1e293b !important; }
     [data-baseweb="select"] > div,
     [data-baseweb="menu"],
     [data-baseweb="menu"] > div,
@@ -146,7 +155,6 @@ st.markdown("""
         border: 1px solid #334155 !important;
     }
     [data-baseweb="menu"] * { color: #e2e8f0 !important; }
-    /* Virtual listbox */
     ul[data-testid="stSelectboxVirtualDropdown"],
     [role="listbox"],
     [role="listbox"] > div,
@@ -154,36 +162,30 @@ st.markdown("""
         background-color: #1e293b !important;
         border-color: #334155 !important;
     }
-    /* Option items */
-    [role="option"] { 
-        background-color: #1e293b !important; 
-        color: #e2e8f0 !important; 
-    }
+    [role="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
     [role="option"]:hover,
-    [role="option"][aria-selected="true"] { 
-        background-color: #0f3460 !important;
-    }
-    [role="option"] * { 
-        color: #e2e8f0 !important; 
-        background-color: transparent !important; 
-    }
-    /* Catch-all for any remaining white backgrounds in dropdowns */
-    li[class*="option"],
-    div[class*="option"] {
-        background-color: #1e293b !important;
-        color: #e2e8f0 !important;
-    }
+    [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
+    [role="option"] * { color: #e2e8f0 !important; background-color: transparent !important; }
+    li[class*="option"], div[class*="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
 
     /* Metric cards */
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         border: 1px solid #0f3460;
         border-radius: 12px;
-        padding: 16px;
+        padding: 12px;
+        overflow: hidden;
     }
     [data-testid="metric-container"] label,
     [data-testid="metric-container"] div { color: #94a3b8 !important; }
-    [data-testid="metric-container"] [data-testid="stMetricValue"] { color: #ffffff !important; font-weight: 700 !important; }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] { 
+        color: #ffffff !important; 
+        font-weight: 700 !important; 
+        font-size: 1.3rem !important; 
+        word-break: break-word !important; 
+        white-space: normal !important; 
+        line-height: 1.2 !important;
+    }
 
     /* Sidebar */
     [data-testid="stSidebar"] { background: #0f1117 !important; }
@@ -196,7 +198,8 @@ st.markdown("""
     /* Inputs */
     [data-testid="stTextInput"] input,
     [data-testid="stNumberInput"] input,
-    [data-testid="stTextArea"] textarea { 
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stDateInput"] input { 
         background: #1e293b !important; 
         color: #e2e8f0 !important;
         border-color: #334155 !important;
@@ -224,61 +227,60 @@ def get_supabase() -> Client:
     key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YXhpcHdzdmxuc3ltZGJrb2txIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMjQzNTQsImV4cCI6MjA4NzYwMDM1NH0.6LyuFmRi6ApaWbgy_acQxEsp6r96dkG8xYJZKFpB6aQ"
     return create_client(url, key)
 
+# --- DB Functions ---
 def get_funds():
     try:
-        sb = get_supabase()
-        res = sb.table("funds").select("*").order("name").execute()
-        return res.data or []
+        return get_supabase().table("funds").select("*").order("name").execute().data or []
     except Exception as e:
         st.error(f"שגיאה בטעינת קרנות: {e}")
         return []
 
 def get_capital_calls(fund_id):
     try:
-        sb = get_supabase()
-        res = sb.table("capital_calls").select("*").eq("fund_id", fund_id).order("call_number").execute()
-        return res.data or []
-    except Exception as e:
-        st.error(f"שגיאה: {e}")
-        return []
+        return get_supabase().table("capital_calls").select("*").eq("fund_id", fund_id).order("call_number").execute().data or []
+    except: return []
 
 def get_distributions(fund_id):
     try:
-        sb = get_supabase()
-        res = sb.table("distributions").select("*").eq("fund_id", fund_id).order("dist_date").execute()
-        return res.data or []
-    except:
-        return []
+        return get_supabase().table("distributions").select("*").eq("fund_id", fund_id).order("dist_date").execute().data or []
+    except: return []
 
 def get_quarterly_reports(fund_id):
     try:
-        sb = get_supabase()
-        res = sb.table("quarterly_reports").select("*").eq("fund_id", fund_id).order("year,quarter").execute()
-        return res.data or []
-    except:
-        return []
+        return get_supabase().table("quarterly_reports").select("*").eq("fund_id", fund_id).order("year,quarter").execute().data or []
+    except: return []
 
 def get_pipeline_funds():
     try:
-        sb = get_supabase()
-        res = sb.table("pipeline_funds").select("*").order("target_close_date").execute()
-        return res.data or []
-    except:
-        return []
+        return get_supabase().table("pipeline_funds").select("*").order("target_close_date").execute().data or []
+    except: return []
 
 def get_gantt_tasks(pipeline_fund_id):
     try:
-        sb = get_supabase()
-        res = sb.table("gantt_tasks").select("*").eq("pipeline_fund_id", pipeline_fund_id).order("start_date").execute()
-        return res.data or []
-    except:
-        return []
+        return get_supabase().table("gantt_tasks").select("*").eq("pipeline_fund_id", pipeline_fund_id).order("start_date").execute().data or []
+    except: return []
 
-USERS = {
-    "liron": "octo2026",
-    "alex": "octo2026",
-    "team": "altgroup2026",
-}
+# --- New LP DB Functions ---
+def get_investors(fund_id):
+    try:
+        return get_supabase().table("investors").select("*").eq("fund_id", fund_id).execute().data or []
+    except: return []
+
+def get_lp_calls(fund_id):
+    try:
+        return get_supabase().table("lp_calls").select("*").eq("fund_id", fund_id).order("call_date").execute().data or []
+    except: return []
+
+def get_lp_payments(fund_id):
+    try:
+        calls = get_lp_calls(fund_id)
+        if not calls: return []
+        call_ids = [c["id"] for c in calls]
+        return get_supabase().table("lp_payments").select("*").in_("lp_call_id", call_ids).execute().data or []
+    except: return []
+
+# --- Auth ---
+USERS = {"liron": "octo2026", "alex": "octo2026", "team": "altgroup2026"}
 
 def check_login(username, password):
     return USERS.get(username.strip().lower()) == password
@@ -313,12 +315,13 @@ def main():
         page = st.radio("ניווט", [
             "🏠 סקירה כללית",
             "📁 תיק השקעות",
+            "👥 משקיעים",
             "🔍 Pipeline",
             "📈 דוחות רבעוניים",
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 2.0 | פברואר 2026")
+        st.caption("גרסה 2.2 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -328,6 +331,8 @@ def main():
         show_overview()
     elif "תיק השקעות" in page:
         show_portfolio()
+    elif "משקיעים" in page:
+        show_investors()
     elif "Pipeline" in page:
         show_pipeline()
     elif "דוחות" in page:
@@ -336,8 +341,8 @@ def main():
 def show_overview():
     st.markdown("""
     <div class="dashboard-header">
-        <h1 style="color:white;margin:0;">📊 Octo Fund Dashboard</h1>
-        <p style="color:#94a3b8;margin:4px 0 0 0;">ALT Group | ניהול השקעות אלטרנטיביות</p>
+    <h1 style="color:white;margin:0;">📊 Octo Fund Dashboard</h1>
+    <p style="color:#94a3b8;margin:4px 0 0 0;">ALT Group | ניהול השקעות אלטרנטיביות</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -351,9 +356,9 @@ def show_overview():
     with col1:
         st.metric("קרנות פעילות", len(funds))
     with col2:
-        st.metric("התחייבויות USD", f"${total_commitment_usd:,.0f}")
+        st.metric("התחייבויות USD", format_currency(total_commitment_usd, "$"))
     with col3:
-        st.metric("התחייבויות EUR", f"€{total_commitment_eur:,.0f}")
+        st.metric("התחייבויות EUR", format_currency(total_commitment_eur, "€"))
     with col4:
         st.metric("קרנות Pipeline", len(pipeline))
 
@@ -373,7 +378,7 @@ def show_overview():
                 rows.append({
                     "קרן": f["name"],
                     "מטבע": f.get("currency", "USD"),
-                    "התחייבות": f"{currency_sym}{commitment:,.0f}" if commitment else "—",
+                    "התחייבות": format_currency(commitment, currency_sym) if commitment else "—",
                     "נקרא %": pct,
                     "סטטוס": "פעיל" if f.get("status") == "active" else f.get("status", ""),
                 })
@@ -393,11 +398,165 @@ def show_overview():
                 <div style="background:#1a3a1a;border-radius:8px;padding:12px;margin-bottom:8px;">
                     <small style="color:#4ade80">{c.get('payment_date','')}</small><br>
                     <strong>{f['name']}</strong><br>
-                    <span style="color:#94a3b8">Call #{c.get('call_number')} | ${c.get('amount',0):,.0f}</span>
+                    <span style="color:#94a3b8">Call #{c.get('call_number')} | {format_currency(c.get('amount',0), '$')}</span>
                 </div>
                 """, unsafe_allow_html=True)
         if not future_calls_found:
             st.info("💡 הוסף Calls עתידיים כדי לראות תחזית כאן")
+
+
+# --- NEW LPs PAGE WITH TOTALS ---
+def show_investors():
+    st.title("👥 ניהול משקיעים וקריאות להון")
+    funds = get_funds()
+    if not funds:
+        st.info("אין קרנות מוגדרות.")
+        return
+
+    fund_options = {f["name"]: f["id"] for f in funds}
+    selected_fund_name = st.selectbox("בחר קרן", list(fund_options.keys()))
+    fund_id = fund_options[selected_fund_name]
+    currency_sym = "€" if next((f["currency"] for f in funds if f["id"] == fund_id), "USD") == "EUR" else "$"
+
+    investors = get_investors(fund_id)
+    lp_calls = get_lp_calls(fund_id)
+    payments = get_lp_payments(fund_id)
+
+    with st.expander("➕ הוסף משקיע חדש לקרן"):
+        with st.form("add_lp_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                inv_name = st.text_input("שם משקיע")
+            with c2:
+                inv_commit = st.number_input("סכום התחייבות", min_value=0)
+            if st.form_submit_button("שמור משקיע", type="primary"):
+                try:
+                    get_supabase().table("investors").insert({"fund_id": fund_id, "name": inv_name, "commitment": inv_commit}).execute()
+                    st.success("משקיע נוסף!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
+
+    if not investors:
+        st.info("אין משקיעים מוגדרים לקרן זו. הוסף משקיע למעלה.")
+        return
+
+    st.divider()
+    st.markdown("### טבלת משקיעים (סמן V להעברה)")
+
+    # Build Dataframe for Data Editor
+    data = []
+    col_mapping = {}
+    total_fund_commitment = 0
+    
+    for inv in investors:
+        inv_commit = inv.get("commitment", 0)
+        total_fund_commitment += inv_commit
+        row = {
+            "id": inv["id"],
+            "שם משקיע": inv["name"],
+            "התחייבות": format_currency(inv_commit, currency_sym)
+        }
+        for c in lp_calls:
+            col_name = f"{c['call_date']} ({c['call_pct']}%)"
+            col_mapping[col_name] = c
+            payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
+            row[col_name] = payment["is_paid"] if payment else False
+        data.append(row)
+
+    df = pd.DataFrame(data)
+    
+    edited_df = st.data_editor(
+        df,
+        column_config={"id": None},
+        disabled=["שם משקיע", "התחייבות"],
+        hide_index=True,
+        use_container_width=True,
+        key=f"lp_editor_{fund_id}"
+    )
+
+    if st.button("💾 שמור סטטוס העברות", type="primary"):
+        sb = get_supabase()
+        try:
+            for index, row in edited_df.iterrows():
+                inv_id = row["id"]
+                for col_name, c in col_mapping.items():
+                    if col_name in row:
+                        is_paid = bool(row[col_name])
+                        existing = [p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv_id]
+                        if existing:
+                            if existing[0]["is_paid"] != is_paid:
+                                sb.table("lp_payments").update({"is_paid": is_paid}).eq("id", existing[0]["id"]).execute()
+                        else:
+                            sb.table("lp_payments").insert({
+                                "lp_call_id": c["id"],
+                                "investor_id": inv_id,
+                                "is_paid": is_paid
+                            }).execute()
+            st.success("✅ הסטטוסים עודכנו בהצלחה!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"שגיאה בעדכון: {e}")
+
+    # --- SUMMARY TOTALS SECTION ---
+    st.divider()
+    st.markdown("### 📊 סיכום גביה לקריאות")
+    
+    col_sum1, col_sum2 = st.columns([1, 3])
+    with col_sum1:
+        st.metric("סה״כ התחייבויות (LPs)", format_currency(total_fund_commitment, currency_sym))
+    
+    with col_sum2:
+        if lp_calls:
+            summary_data = []
+            for c in lp_calls:
+                call_pct = c["call_pct"] / 100.0
+                total_called_amount = total_fund_commitment * call_pct
+                
+                # Calculate total paid amount
+                paid_commit = 0
+                for inv in investors:
+                    payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
+                    if payment and payment["is_paid"]:
+                        paid_commit += inv.get("commitment", 0)
+                
+                total_paid_amount = paid_commit * call_pct
+                outstanding = total_called_amount - total_paid_amount
+                
+                summary_data.append({
+                    "קריאה": f"{c['call_date']} ({c['call_pct']}%)",
+                    "סה״כ נדרש": format_currency(total_called_amount, currency_sym),
+                    "סה״כ התקבל": format_currency(total_paid_amount, currency_sym),
+                    "יתרה חסרה": format_currency(outstanding, currency_sym)
+                })
+            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("אין קריאות פעילות עדיין.")
+
+    st.divider()
+    st.markdown("### ➕ קריאה חדשה לכסף (Capital Call)")
+    with st.form("new_lp_call"):
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1:
+            new_call_date = st.date_input("תאריך קריאה")
+        with c2:
+            new_call_pct = st.number_input("אחוז מההתחייבות (%)", min_value=0.0, max_value=100.0, step=0.1)
+        with c3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            submitted = st.form_submit_button("הוסף קריאה", use_container_width=True)
+            
+        if submitted:
+            try:
+                get_supabase().table("lp_calls").insert({
+                    "fund_id": fund_id,
+                    "call_date": str(new_call_date),
+                    "call_pct": new_call_pct
+                }).execute()
+                st.success("✅ קריאה חדשה נוספה לטבלה!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"שגיאה: {e}")
+
 
 def show_portfolio():
     st.title("📁 תיק השקעות")
@@ -423,14 +582,14 @@ def show_fund_detail(fund):
 
     col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
     with col1:
-        st.metric("התחייבות", f"{currency_sym}{commitment:,.0f}" if commitment else "—")
+        st.metric("התחייבות", format_currency(commitment, currency_sym))
     with col2:
         pct = f"{total_called/commitment*100:.1f}%" if commitment > 0 else "—"
-        st.metric("סה״כ נקרא", f"{currency_sym}{total_called:,.0f}", pct)
+        st.metric("סה״כ נקרא", format_currency(total_called, currency_sym), pct)
     with col3:
-        st.metric("יתרה לא נקראה", f"{currency_sym}{uncalled:,.0f}" if commitment else "—")
+        st.metric("יתרה לא נקראה", format_currency(uncalled, currency_sym))
     with col4:
-        st.metric("סה״כ חולק", f"{currency_sym}{total_dist:,.0f}")
+        st.metric("סה״כ חולק", format_currency(total_dist, currency_sym))
     with col_edit:
         if st.button("✏️ עריכה", key=f"edit_fund_{fund['id']}"):
             st.session_state[f"editing_fund_{fund['id']}"] = True
@@ -506,15 +665,15 @@ def show_fund_detail(fund):
         if calls:
             st.markdown("**רשימת Calls**")
             for c in calls:
-                with st.expander(f"Call #{c.get('call_number')} | {c.get('payment_date','')} | {currency_sym}{c.get('amount',0):,.0f} {'🔮' if c.get('is_future') else '✅'}", expanded=False):
+                with st.expander(f"Call #{c.get('call_number')} | {c.get('payment_date','')} | {format_currency(c.get('amount',0), currency_sym)} {'🔮' if c.get('is_future') else '✅'}", expanded=False):
                     col1, col2, col3 = st.columns([2,2,1])
                     with col1:
                         st.write(f"תאריך קבלה: {c.get('call_date','')}")
                         st.write(f"תאריך תשלום: {c.get('payment_date','')}")
-                        st.write(f"סכום: {currency_sym}{c.get('amount',0):,.0f}")
+                        st.write(f"סכום: {format_currency(c.get('amount',0), currency_sym)}")
                     with col2:
-                        st.write(f"השקעות: {currency_sym}{c.get('investments',0):,.0f}" if c.get('investments') else "השקעות: —")
-                        st.write(f"דמי ניהול: {currency_sym}{c.get('mgmt_fee',0):,.0f}" if c.get('mgmt_fee') else "דמי ניהול: —")
+                        st.write(f"השקעות: {format_currency(c.get('investments',0), currency_sym)}" if c.get('investments') else "השקעות: —")
+                        st.write(f"דמי ניהול: {format_currency(c.get('mgmt_fee',0), currency_sym)}" if c.get('mgmt_fee') else "דמי ניהול: —")
                         if c.get('notes'):
                             st.write(f"הערות: {c.get('notes')}")
                     with col3:
@@ -585,10 +744,10 @@ def show_fund_detail(fund):
         if dists:
             st.markdown("**רשימת Distributions**")
             for d in dists:
-                with st.expander(f"Dist #{d.get('dist_number')} | {d.get('dist_date','')} | {currency_sym}{d.get('amount',0):,.0f}", expanded=False):
+                with st.expander(f"Dist #{d.get('dist_number')} | {d.get('dist_date','')} | {format_currency(d.get('amount',0), currency_sym)}", expanded=False):
                     col1, col2 = st.columns([4,1])
                     with col1:
-                        st.write(f"סוג: {d.get('dist_type','')} | סכום: {currency_sym}{d.get('amount',0):,.0f}")
+                        st.write(f"סוג: {d.get('dist_type','')} | סכום: {format_currency(d.get('amount',0), currency_sym)}")
                     with col2:
                         if st.button("🗑️", key=f"del_dist_{d['id']}", help="מחק Distribution"):
                             st.session_state[f"confirm_del_dist_{d['id']}"] = True
@@ -637,7 +796,7 @@ def show_fund_detail(fund):
                 with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
                     col1, col2 = st.columns([4,1])
                     with col1:
-                        st.write(f"NAV: {currency_sym}{r.get('nav',0):,.0f} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
+                        st.write(f"NAV: {format_currency(r.get('nav',0), currency_sym)} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
                         if r.get('notes'):
                             st.write(f"הערות: {r.get('notes')}")
                     with col2:
@@ -889,7 +1048,7 @@ def show_pipeline():
                 currency_sym = "€" if fund.get("currency") == "EUR" else "$"
                 with col1:
                     commitment = fund.get("target_commitment") or 0
-                    st.metric("יעד השקעה", f"{currency_sym}{commitment:,.0f}" if commitment else "—")
+                    st.metric("יעד השקעה", format_currency(commitment, currency_sym))
                 with col2:
                     st.metric("תאריך סגירה", str(fund.get("target_close_date", "")))
                 with col3:
@@ -955,13 +1114,14 @@ def show_gantt(tasks, fund):
             cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
             status = t.get("status", "todo")
             if status == "done":
-                bar_color = "#22c55e"
+                bar_color = "#22c55e" 
             elif status == "blocked":
-                bar_color = "#ef4444"
+                bar_color = "#ef4444" 
             elif status == "in_progress":
-                bar_color = "#3b82f6"
+                bar_color = "#3b82f6" 
             else:
-                bar_color = cfg["color"]
+                bar_color = "#475569" 
+
             gantt_tasks_data.append({
                 "Task": f"{cfg['icon']} {t['task_name']}",
                 "Start": t["start_date"],
@@ -973,40 +1133,49 @@ def show_gantt(tasks, fund):
 
     if gantt_tasks_data:
         fig = go.Figure()
-        for i, t in enumerate(reversed(gantt_tasks_data)):
+        sorted_tasks = sorted(gantt_tasks_data, key=lambda x: x["Start"], reverse=True)
+
+        for i, t in enumerate(sorted_tasks):
             start_dt = datetime.fromisoformat(t["Start"])
             finish_dt = datetime.fromisoformat(t["Finish"])
-            duration = (finish_dt - start_dt).days
+            duration_ms = (finish_dt - start_dt).total_seconds() * 1000
+
             fig.add_trace(go.Bar(
-                x=[duration],
+                x=[duration_ms],
                 y=[t["Task"]],
                 base=[t["Start"]],
                 orientation="h",
-                marker=dict(color=t["Color"], opacity=0.85, line=dict(width=0)),
+                marker=dict(color=t["Color"], opacity=0.9, line=dict(width=1, color="#0f172a")),
+                text=[f" {t['Status']}"],
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(color="white", size=12),
                 hovertemplate=f"<b>{t['Task']}</b><br>{t['Start']} → {t['Finish']}<br>סטטוס: {t['Status']}<extra></extra>",
                 showlegend=False,
             ))
+            
         fig.add_shape(
             type="line",
             x0=str(today), x1=str(today),
             y0=0, y1=1, yref="paper",
-            line=dict(color="#f59e0b", width=1.5, dash="dash"),
+            line=dict(color="#f59e0b", width=2, dash="dash"),
         )
         fig.add_annotation(
             x=str(today), y=1, yref="paper",
             text="היום", showarrow=False,
-            font=dict(color="#f59e0b", size=11),
+            font=dict(color="#f59e0b", size=13),
             yanchor="bottom"
         )
+        
         fig.update_layout(
-            height=max(300, len(gantt_tasks_data) * 28 + 80),
+            height=max(400, len(sorted_tasks) * 45 + 100),
             barmode="overlay",
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="#0f172a",
-            font=dict(color="#e2e8f0", size=11, family="Heebo"),
-            margin=dict(l=10, r=20, t=20, b=30),
-            xaxis=dict(type="date", gridcolor="#1e293b", tickformat="%d/%m/%y", tickfont=dict(size=10)),
-            yaxis=dict(gridcolor="#1e293b", tickfont=dict(size=11), automargin=True),
+            font=dict(color="#e2e8f0", size=14, family="Heebo"),
+            margin=dict(l=10, r=20, t=40, b=40),
+            xaxis=dict(type="date", gridcolor="#1e293b", tickformat="%d/%m/%y", tickfont=dict(size=13)),
+            yaxis=dict(gridcolor="#1e293b", tickfont=dict(size=14), automargin=True),
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1052,7 +1221,6 @@ def show_gantt(tasks, fund):
             with col2:
                 st.caption(due)
             with col3:
-                # FIX: label must not be empty - use label_visibility="collapsed" to hide it visually
                 new_status = st.selectbox(
                     "סטטוס",
                     STATUS_LIST,
@@ -1113,7 +1281,6 @@ def show_reports():
                 st.rerun()
             except Exception as e:
                 st.error(f"שגיאה: {e}")
-
 
 if __name__ == "__main__":
     main()
