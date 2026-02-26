@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v3.4 - app.py
-FOF LPs Management, CSS Icon Fix, Gantt Keys Fix, Editable Task Dates
+OCTO FUND DASHBOARD v3.5 - app.py
+FOF LPs Management, Bulletproof CSS Icon Fix, Gantt Keys Fix, Editable Task Dates
 """
 
 import streamlit as st
@@ -107,14 +107,19 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&display=swap');
     
-    /* Apply Heebo ONLY to elements that are NOT icons */
-    html, body, [class*="st-"], p, div, span, label, h1, h2, h3, h4, h5, h6, li, button, input {
-        font-family: 'Heebo', sans-serif;
+    /* Apply Heebo font globally, EXCEPT on elements that are known to be icons.
+       This prevents the "keyboard_arrow_down" text bleeding issue.
+    */
+    html, body, p, div, label, h1, h2, h3, h4, h5, h6, a, ul, li, 
+    span:not(.material-symbols-rounded):not(.material-icons), 
+    button, input, select, textarea {
+        font-family: 'Heebo', sans-serif !important;
     }
     
-    /* Force Streamlit Material Icons to behave normally (Prevents "keyboard_arrow" text bug) */
-    .material-symbols-rounded, .material-icons, [class*="icon"], i, svg {
+    /* Force Streamlit Material Icons to behave normally */
+    .material-symbols-rounded, .material-icons {
         font-family: 'Material Symbols Rounded', 'Material Icons' !important;
+        font-feature-settings: 'liga' !important;
     }
     
     .main { direction: rtl; }
@@ -124,8 +129,8 @@ st.markdown("""
     [data-testid="stHeader"] { background-color: #0f1117 !important; }
     section[data-testid="stSidebar"] + div { background-color: #0f1117 !important; }
     .stApp, .main, [data-testid="stAppViewContainer"] { color: #e2e8f0 !important; }
-
-    /* Expander */
+    
+    /* Expander override */
     [data-testid="stExpander"] summary { 
         color: #e2e8f0 !important;
         direction: rtl !important;
@@ -319,7 +324,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 2.4 | פברואר 2026")
+        st.caption("גרסה 2.5 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -1195,7 +1200,6 @@ def show_gantt(tasks, fund):
             status = t.get("status", "todo")
             scfg = STATUS_CONFIG.get(status, STATUS_CONFIG["todo"])
             
-            # Parse dates safely
             try:
                 current_start = datetime.fromisoformat(t["start_date"]).date() if t.get("start_date") else date.today()
                 current_due = datetime.fromisoformat(t["due_date"]).date() if t.get("due_date") else date.today()
@@ -1222,7 +1226,6 @@ def show_gantt(tasks, fund):
                     label_visibility="collapsed"
                 )
                 
-            # Update DB if anything changed
             if new_status != status or str(new_start) != t.get("start_date") or str(new_due) != t.get("due_date"):
                 try:
                     sb.table("gantt_tasks").update({
