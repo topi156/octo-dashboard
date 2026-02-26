@@ -10,7 +10,7 @@ import json
 import requests
 from supabase import create_client, Client
 
-OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
+OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     """Extract text from PDF using pymupdf."""
@@ -629,23 +629,110 @@ def show_pipeline():
         return
 
     for fund in pipeline:
+        fid = fund["id"]
         with st.expander(f"📋 {fund['name']} | {fund.get('strategy','')} | {fund.get('priority','').upper()} | סגירה: {fund.get('target_close_date','')}", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            currency_sym = "€" if fund.get("currency") == "EUR" else "$"
-            with col1:
-                commitment = fund.get("target_commitment") or 0
-                st.metric("יעד השקעה", f"{currency_sym}{commitment:,.0f}" if commitment else "—")
-            with col2:
-                st.metric("תאריך סגירה", str(fund.get("target_close_date", "")))
-            with col3:
-                st.metric("עדיפות", fund.get("priority", "").upper())
             
-            if fund.get("notes"):
-                st.caption(f"📝 {fund['notes']}")
+            # Action buttons
+            col_a, col_b, col_c = st.columns([1, 1, 4])
+            with col_a:
+                if st.button("✏️ עריכה", key=f"edit_{fid}"):
+                    st.session_state[f"editing_{fid}"] = True
+            with col_b:
+                if st.button("🗑️ מחיקה", key=f"del_{fid}"):
+                    st.session_state[f"confirm_delete_{fid}"] = True
 
-            tasks = get_gantt_tasks(fund["id"])
-            if tasks:
-                show_gantt(tasks, fund)
+            # Confirm delete
+            if st.session_state.get(f"confirm_delete_{fid}"):
+                st.warning(f"⚠️ למחוק את '{fund['name']}'? פעולה זו תמחק גם את כל משימות הגאנט.")
+                col_yes, col_no = st.columns(2)
+                with col_yes:
+                    if st.button("✅ כן, מחק", key=f"yes_{fid}", type="primary"):
+                        try:
+                            sb = get_supabase()
+                            sb.table("gantt_tasks").delete().eq("pipeline_fund_id", fid).execute()
+                            sb.table("pipeline_funds").delete().eq("id", fid).execute()
+                            st.success("נמחק!")
+                            st.session_state.pop(f"confirm_delete_{fid}", None)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"שגיאה: {e}")
+                with col_no:
+                    if st.button("❌ ביטול", key=f"no_{fid}"):
+                        st.session_state.pop(f"confirm_delete_{fid}", None)
+                        st.rerun()
+
+            # Edit form
+            if st.session_state.get(f"editing_{fid}"):
+                with st.form(f"edit_form_{fid}"):
+                    st.markdown("**✏️ עריכת פרטי קרן**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        new_name = st.text_input("שם הקרן", value=fund.get("name",""))
+                        new_manager = st.text_input("מנהל", value=fund.get("manager",""))
+                        strategy_opts = ["PE", "Credit", "Infrastructure", "Real Estate", "Hedge", "Venture"]
+                        cur_strat = fund.get("strategy","PE")
+                        new_strategy = st.selectbox("אסטרטגיה", strategy_opts, 
+                            index=strategy_opts.index(cur_strat) if cur_strat in strategy_opts else 0)
+                        new_geo = st.text_input("מיקוד גיאוגרפי", value=fund.get("geographic_focus","") or "")
+                    with col2:
+                        cur_commit = float(fund.get("target_commitment") or 0)
+                        new_commitment = st.number_input("יעד השקעה ($M)", value=cur_commit/1_000_000 if cur_commit > 1000 else cur_commit, step=0.5)
+                        cur_currency = fund.get("currency","USD")
+                        new_currency = st.selectbox("מטבע", ["USD","EUR"], index=0 if cur_currency=="USD" else 1)
+                        priority_opts = ["high","medium","low"]
+                        cur_priority = fund.get("priority","medium")
+                        new_priority = st.selectbox("עדיפות", priority_opts,
+                            index=priority_opts.index(cur_priority) if cur_priority in priority_opts else 1)
+                        import datetime
+                        cur_date = fund.get("target_close_date")
+                        try:
+                            default_date = datetime.date.fromisoformat(str(cur_date)) if cur_date else datetime.date.today()
+                        except:
+                            default_date = datetime.date.today()
+                        new_close = st.date_input("תאריך סגירה", value=default_date)
+                    new_notes = st.text_area("הערות", value=fund.get("notes","") or "")
+                    
+                    col_save, col_cancel = st.columns(2)
+                    with col_save:
+                        if st.form_submit_button("💾 שמור שינויים", type="primary"):
+                            try:
+                                get_supabase().table("pipeline_funds").update({
+                                    "name": new_name,
+                                    "manager": new_manager,
+                                    "strategy": new_strategy,
+                                    "target_commitment": new_commitment,
+                                    "currency": new_currency,
+                                    "priority": new_priority,
+                                    "target_close_date": str(new_close),
+                                    "notes": new_notes
+                                }).eq("id", fid).execute()
+                                st.success("✅ עודכן!")
+                                st.session_state.pop(f"editing_{fid}", None)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"שגיאה: {e}")
+                    with col_cancel:
+                        if st.form_submit_button("❌ ביטול"):
+                            st.session_state.pop(f"editing_{fid}", None)
+                            st.rerun()
+            else:
+                # Display mode
+                col1, col2, col3 = st.columns(3)
+                currency_sym = "€" if fund.get("currency") == "EUR" else "$"
+                with col1:
+                    commitment = fund.get("target_commitment") or 0
+                    st.metric("יעד השקעה", f"{currency_sym}{commitment:,.0f}" if commitment else "—")
+                with col2:
+                    st.metric("תאריך סגירה", str(fund.get("target_close_date", "")))
+                with col3:
+                    st.metric("עדיפות", fund.get("priority", "").upper())
+                
+                if fund.get("notes"):
+                    st.caption(f"📝 {fund['notes']}")
+
+                tasks = get_gantt_tasks(fund["id"])
+                if tasks:
+                    show_gantt(tasks, fund)
 
 def show_gantt(tasks, fund):
     import plotly.figure_factory as ff
