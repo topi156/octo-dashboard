@@ -13,30 +13,21 @@ from supabase import create_client, Client
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
-    """Extract text from PDF - takes full text with smart truncation."""
-    import fitz  # pymupdf
+    import fitz
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    
-    # Extract all pages
     pages_text = []
     for i, page in enumerate(doc):
         text = page.get_text().strip()
         if text:
             pages_text.append(f"--- Page {i+1} ---\n{text}")
     doc.close()
-    
     full_text = "\n".join(pages_text)
-    
-    # If short enough, return all
     if len(full_text) <= 12000:
         return full_text
-    
-    # Otherwise: take first 4000 chars + last 8000 chars (terms/performance usually at end)
     return full_text[:4000] + "\n\n[...]\n\n" + full_text[-8000:]
 
 def analyze_pdf_with_ai(pdf_bytes: bytes) -> dict:
     pdf_text = extract_pdf_text(pdf_bytes)
-    
     prompt = f"""You are an expert private equity analyst. Carefully analyze this fund presentation and extract ALL available information.
 Be thorough - search the entire text for financial terms, fees, returns, geography, and strategy details.
 
@@ -48,21 +39,21 @@ Return ONLY a valid JSON object with these exact keys (use null only if truly no
   "fund_size_target": number in millions USD (e.g. 2500 for $2.5B),
   "fund_size_hard_cap": number in millions USD or null,
   "currency": "USD or EUR",
-  "target_return_moic_low": number (e.g. 3.0) - look for '3x to 5x', 'base case returns',
+  "target_return_moic_low": number (e.g. 3.0),
   "target_return_moic_high": number (e.g. 5.0),
-  "target_irr_gross": number as percentage (e.g. 25) - look for 'gross IRR', 'target IRR',
+  "target_irr_gross": number as percentage (e.g. 25),
   "target_irr_net": number as percentage or null,
   "vintage_year": number (year) or null,
   "fund_life_years": number or null,
   "investment_period_years": number or null,
-  "mgmt_fee_pct": number (e.g. 2.0) - look for 'management fee', '2%',
-  "carried_interest_pct": number (e.g. 20) - look for 'carried interest', 'carry',
-  "preferred_return_pct": number (e.g. 8) - look for 'preferred return', 'hurdle',
+  "mgmt_fee_pct": number (e.g. 2.0),
+  "carried_interest_pct": number (e.g. 20),
+  "preferred_return_pct": number (e.g. 8),
   "geographic_focus": "specific description e.g. United States, North America, Global",
   "sector_focus": "specific sectors e.g. Technology, Healthcare, Consumer, AI",
   "portfolio_companies_target": number of investments planned or null,
-  "max_single_investment_pct": number (e.g. 15) - look for max per investment,
-  "aum_manager": number in billions (e.g. 33.3) - look for 'AUM', 'assets under management',
+  "max_single_investment_pct": number (e.g. 15) or null,
+  "aum_manager": number in billions (e.g. 33.3) or null,
   "key_highlights": "3-4 sentence summary of the fund investment thesis and differentiators"
 }}
 
@@ -99,28 +90,20 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Hebrew RTL + styling
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&display=swap');
-    
     * { font-family: 'Heebo', sans-serif !important; }
-    
-    /* RTL */
     .main { direction: rtl; }
     .stMarkdown, .stText, h1, h2, h3, p { direction: rtl; text-align: right; }
-
-    /* Force dark background */
     .stApp { background-color: #0f1117 !important; }
     [data-testid="stAppViewContainer"] { background-color: #0f1117 !important; }
     [data-testid="stHeader"] { background-color: #0f1117 !important; }
     section[data-testid="stSidebar"] + div { background-color: #0f1117 !important; }
-
-    /* Global text color - white everywhere */
     .stApp, .main, [data-testid="stAppViewContainer"] { color: #e2e8f0 !important; }
     p, span, label, div { color: #e2e8f0; }
-    
-    /* Expander - fix RTL arrow overlap */
+
+    /* Expander */
     [data-testid="stExpander"] summary { 
         color: #e2e8f0 !important;
         direction: rtl !important;
@@ -139,22 +122,57 @@ st.markdown("""
         margin-bottom: 8px !important;
     }
 
-    /* Selectbox dropdown - dark background */
-    [data-testid="stSelectbox"] > div > div {
-        background: #1e293b !important;
+    /* ═══ Selectbox + Dropdown - COMPREHENSIVE DARK FIX ═══ */
+    /* Box itself */
+    [data-testid="stSelectbox"] > div > div,
+    [data-testid="stSelectbox"] > div > div > div,
+    [data-testid="stSelectbox"] span { 
+        background-color: #1e293b !important;
         color: #e2e8f0 !important;
         border-color: #334155 !important;
     }
-    ul[data-testid="stSelectboxVirtualDropdown"],
-    [role="listbox"] {
-        background: #1e293b !important;
+    /* BaseWeb popover container */
+    [data-baseweb="popover"],
+    [data-baseweb="popover"] > div,
+    [data-baseweb="popover"] > div > div {
+        background-color: #1e293b !important;
+    }
+    /* BaseWeb select menu */
+    [data-baseweb="select"] > div,
+    [data-baseweb="menu"],
+    [data-baseweb="menu"] > div,
+    [data-baseweb="menu"] ul {
+        background-color: #1e293b !important;
         border: 1px solid #334155 !important;
     }
+    [data-baseweb="menu"] * { color: #e2e8f0 !important; }
+    /* Virtual listbox */
+    ul[data-testid="stSelectboxVirtualDropdown"],
+    [role="listbox"],
+    [role="listbox"] > div,
+    [role="listbox"] li { 
+        background-color: #1e293b !important;
+        border-color: #334155 !important;
+    }
+    /* Option items */
     [role="option"] { 
-        background: #1e293b !important; 
+        background-color: #1e293b !important; 
         color: #e2e8f0 !important; 
     }
-    [role="option"]:hover { background: #0f3460 !important; }
+    [role="option"]:hover,
+    [role="option"][aria-selected="true"] { 
+        background-color: #0f3460 !important;
+    }
+    [role="option"] * { 
+        color: #e2e8f0 !important; 
+        background-color: transparent !important; 
+    }
+    /* Catch-all for any remaining white backgrounds in dropdowns */
+    li[class*="option"],
+    div[class*="option"] {
+        background-color: #1e293b !important;
+        color: #e2e8f0 !important;
+    }
 
     /* Metric cards */
     [data-testid="metric-container"] {
@@ -178,44 +196,27 @@ st.markdown("""
     /* Inputs */
     [data-testid="stTextInput"] input,
     [data-testid="stNumberInput"] input,
-    [data-testid="stTextArea"] textarea,
-    [data-testid="stSelectbox"] div { 
+    [data-testid="stTextArea"] textarea { 
         background: #1e293b !important; 
         color: #e2e8f0 !important;
         border-color: #334155 !important;
     }
 
-    /* Dataframe */
     [data-testid="stDataFrame"] { color: #e2e8f0 !important; }
-
-    /* Captions */
     [data-testid="stCaptionContainer"] { color: #94a3b8 !important; }
-
-    /* Divider */
     hr { border-color: #1e293b !important; }
 
-    /* Dashboard header */
     .dashboard-header {
         background: linear-gradient(90deg, #1a1a2e, #0f3460);
         padding: 20px 30px;
         border-radius: 12px;
         margin-bottom: 24px;
     }
-
-    /* Toggle */
     [data-testid="stToggle"] label { color: #94a3b8 !important; }
-
-    /* Multiselect */
     [data-testid="stMultiSelect"] span { color: #e2e8f0 !important; }
-
-    /* Info/warning/success boxes */
     [data-testid="stAlert"] { color: #e2e8f0 !important; }
 </style>
 """, unsafe_allow_html=True)
-
-# ============================================
-# SUPABASE CLIENT
-# ============================================
 
 @st.cache_resource
 def get_supabase() -> Client:
@@ -246,7 +247,7 @@ def get_distributions(fund_id):
         sb = get_supabase()
         res = sb.table("distributions").select("*").eq("fund_id", fund_id).order("dist_date").execute()
         return res.data or []
-    except Exception as e:
+    except:
         return []
 
 def get_quarterly_reports(fund_id):
@@ -254,7 +255,7 @@ def get_quarterly_reports(fund_id):
         sb = get_supabase()
         res = sb.table("quarterly_reports").select("*").eq("fund_id", fund_id).order("year,quarter").execute()
         return res.data or []
-    except Exception as e:
+    except:
         return []
 
 def get_pipeline_funds():
@@ -262,7 +263,7 @@ def get_pipeline_funds():
         sb = get_supabase()
         res = sb.table("pipeline_funds").select("*").order("target_close_date").execute()
         return res.data or []
-    except Exception as e:
+    except:
         return []
 
 def get_gantt_tasks(pipeline_fund_id):
@@ -270,12 +271,8 @@ def get_gantt_tasks(pipeline_fund_id):
         sb = get_supabase()
         res = sb.table("gantt_tasks").select("*").eq("pipeline_fund_id", pipeline_fund_id).order("start_date").execute()
         return res.data or []
-    except Exception as e:
+    except:
         return []
-
-# ============================================
-# AUTHENTICATION
-# ============================================
 
 USERS = {
     "liron": "octo2026",
@@ -307,13 +304,8 @@ def require_login():
         show_login()
         st.stop()
 
-# ============================================
-# MAIN APP
-# ============================================
-
 def main():
     require_login()
-
     with st.sidebar:
         st.markdown("## 📊 Octo Dashboard")
         st.markdown("**ALT Group** | Private Capital")
@@ -341,10 +333,6 @@ def main():
     elif "דוחות" in page:
         show_reports()
 
-# ============================================
-# OVERVIEW PAGE
-# ============================================
-
 def show_overview():
     st.markdown("""
     <div class="dashboard-header">
@@ -356,7 +344,6 @@ def show_overview():
     funds = get_funds()
     pipeline = get_pipeline_funds()
 
-    # KPIs
     total_commitment_usd = sum(f.get("commitment") or 0 for f in funds if f.get("currency") == "USD")
     total_commitment_eur = sum(f.get("commitment") or 0 for f in funds if f.get("currency") == "EUR")
 
@@ -371,7 +358,6 @@ def show_overview():
         st.metric("קרנות Pipeline", len(pipeline))
 
     st.divider()
-
     col1, col2 = st.columns([2, 1])
 
     with col1:
@@ -397,7 +383,6 @@ def show_overview():
 
     with col2:
         st.subheader("🔔 אירועים קרובים")
-        # Show future capital calls
         future_calls_found = False
         for f in funds:
             calls = get_capital_calls(f["id"])
@@ -414,18 +399,12 @@ def show_overview():
         if not future_calls_found:
             st.info("💡 הוסף Calls עתידיים כדי לראות תחזית כאן")
 
-# ============================================
-# PORTFOLIO PAGE
-# ============================================
-
 def show_portfolio():
     st.title("📁 תיק השקעות")
     funds = get_funds()
-
     if not funds:
         st.info("אין קרנות במערכת")
         return
-
     tabs = st.tabs([f["name"] for f in funds])
     for i, fund in enumerate(funds):
         with tabs[i]:
@@ -442,7 +421,6 @@ def show_fund_detail(fund):
     uncalled = commitment - total_called
     currency_sym = "€" if fund.get("currency") == "EUR" else "$"
 
-    # Fund header + edit/delete buttons
     col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
     with col1:
         st.metric("התחייבות", f"{currency_sym}{commitment:,.0f}" if commitment else "—")
@@ -460,7 +438,6 @@ def show_fund_detail(fund):
         if st.button("🗑️ מחיקה", key=f"del_fund_{fund['id']}"):
             st.session_state[f"confirm_del_fund_{fund['id']}"] = True
 
-    # Confirm delete fund
     if st.session_state.get(f"confirm_del_fund_{fund['id']}"):
         st.warning(f"⚠️ למחוק את '{fund['name']}'? יימחקו גם כל ה-Calls, Distributions ודוחות.")
         c1, c2 = st.columns(2)
@@ -482,7 +459,6 @@ def show_fund_detail(fund):
                 st.session_state.pop(f"confirm_del_fund_{fund['id']}", None)
                 st.rerun()
 
-    # Edit fund form
     if st.session_state.get(f"editing_fund_{fund['id']}"):
         with st.form(f"edit_fund_form_{fund['id']}"):
             st.markdown("**✏️ עריכת פרטי קרן**")
@@ -524,10 +500,8 @@ def show_fund_detail(fund):
                     st.rerun()
 
     st.divider()
-
     tab1, tab2, tab3 = st.tabs(["📞 Capital Calls", "💰 Distributions", "📊 ביצועים"])
 
-    # --- CAPITAL CALLS ---
     with tab1:
         if calls:
             st.markdown("**רשימת Calls**")
@@ -546,7 +520,6 @@ def show_fund_detail(fund):
                     with col3:
                         if st.button("🗑️", key=f"del_call_{c['id']}", help="מחק Call"):
                             st.session_state[f"confirm_del_call_{c['id']}"] = True
-                    
                     if st.session_state.get(f"confirm_del_call_{c['id']}"):
                         st.warning("למחוק Call זה?")
                         cc1, cc2 = st.columns(2)
@@ -562,7 +535,6 @@ def show_fund_detail(fund):
                                 st.session_state.pop(f"confirm_del_call_{c['id']}", None)
                                 st.rerun()
 
-            # Bar chart
             import plotly.express as px
             chart_data = [c for c in calls if not c.get("is_future") and c.get("amount")]
             if chart_data:
@@ -595,28 +567,20 @@ def show_fund_detail(fund):
                 gp_contribution = st.number_input("GP Contribution", min_value=0.0)
                 is_future = st.checkbox("קריאה עתידית")
                 notes = st.text_input("הערות")
-
             if st.form_submit_button("שמור", type="primary"):
                 try:
                     get_supabase().table("capital_calls").insert({
-                        "fund_id": fund["id"],
-                        "call_number": call_num,
-                        "call_date": str(call_date),
-                        "payment_date": str(payment_date),
-                        "amount": amount,
-                        "investments": investments,
-                        "mgmt_fee": mgmt_fee,
-                        "fund_expenses": fund_expenses,
-                        "gp_contribution": gp_contribution,
-                        "is_future": is_future,
-                        "notes": notes
+                        "fund_id": fund["id"], "call_number": call_num,
+                        "call_date": str(call_date), "payment_date": str(payment_date),
+                        "amount": amount, "investments": investments,
+                        "mgmt_fee": mgmt_fee, "fund_expenses": fund_expenses,
+                        "gp_contribution": gp_contribution, "is_future": is_future, "notes": notes
                     }).execute()
                     st.success("✅ נשמר!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
-    # --- DISTRIBUTIONS ---
     with tab2:
         if dists:
             st.markdown("**רשימת Distributions**")
@@ -628,7 +592,6 @@ def show_fund_detail(fund):
                     with col2:
                         if st.button("🗑️", key=f"del_dist_{d['id']}", help="מחק Distribution"):
                             st.session_state[f"confirm_del_dist_{d['id']}"] = True
-                    
                     if st.session_state.get(f"confirm_del_dist_{d['id']}"):
                         st.warning("למחוק Distribution זה?")
                         dc1, dc2 = st.columns(2)
@@ -659,18 +622,14 @@ def show_fund_detail(fund):
             if st.form_submit_button("שמור", type="primary"):
                 try:
                     get_supabase().table("distributions").insert({
-                        "fund_id": fund["id"],
-                        "dist_number": dist_num,
-                        "dist_date": str(dist_date),
-                        "amount": dist_amount,
-                        "dist_type": dist_type
+                        "fund_id": fund["id"], "dist_number": dist_num,
+                        "dist_date": str(dist_date), "amount": dist_amount, "dist_type": dist_type
                     }).execute()
                     st.success("✅ נשמר!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
-    # --- PERFORMANCE ---
     with tab3:
         if reports:
             st.markdown("**דוחות רבעוניים**")
@@ -684,7 +643,6 @@ def show_fund_detail(fund):
                     with col2:
                         if st.button("🗑️", key=f"del_rep_{r['id']}", help="מחק דוח"):
                             st.session_state[f"confirm_del_rep_{r['id']}"] = True
-
                     if st.session_state.get(f"confirm_del_rep_{r['id']}"):
                         st.warning("למחוק דוח זה?")
                         rc1, rc2 = st.columns(2)
@@ -714,10 +672,6 @@ def show_fund_detail(fund):
         else:
             st.info("אין דוחות רבעוניים עדיין")
 
-# ============================================
-# PIPELINE PAGE
-# ============================================
-
 def show_pipeline():
     st.title("🔍 קרנות Pipeline")
     pipeline = get_pipeline_funds()
@@ -732,12 +686,10 @@ def show_pipeline():
             st.session_state.show_pdf_upload = True
             st.session_state.show_add_pipeline = False
 
-    # PDF UPLOAD & ANALYSIS
     if st.session_state.get("show_pdf_upload"):
         st.divider()
         st.markdown("### 📄 ניתוח PDF אוטומטי")
         uploaded_pdf = st.file_uploader("העלה מצגת קרן (PDF)", type=["pdf"], key="pdf_uploader")
-        
         if uploaded_pdf:
             if st.button("🤖 נתח עם AI", type="primary"):
                 with st.spinner("Claude מנתח את המצגת... (30-60 שניות)"):
@@ -748,16 +700,12 @@ def show_pipeline():
                         st.success("✅ ניתוח הושלם!")
                     except Exception as e:
                         st.error(f"שגיאה: {e}")
-        
         if st.session_state.get("pdf_result"):
             r = st.session_state.pdf_result
             st.divider()
             st.markdown("### 📋 פרטים שנמצאו – אשר ועדכן")
-            
-            # Show highlights
             if r.get("key_highlights"):
                 st.info(f"💡 {r.get('key_highlights')}")
-            
             with st.form("pdf_pipeline_form"):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -769,14 +717,12 @@ def show_pipeline():
                     strategy = st.selectbox("אסטרטגיה", strategy_options, index=strategy_idx)
                     geographic = st.text_input("מיקוד גיאוגרפי", value=r.get("geographic_focus") or "")
                     sector = st.text_input("מיקוד סקטור", value=r.get("sector_focus") or "")
-
                 with col2:
                     fund_size = r.get("fund_size_target") or 0
                     target_commitment = st.number_input("יעד השקעה שלנו ($M)", min_value=0.0, value=0.0, step=0.5)
                     currency = st.selectbox("מטבע", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
                     target_close = st.date_input("תאריך סגירה משוער")
                     priority = st.selectbox("עדיפות", ["high", "medium", "low"])
-                
                 st.divider()
                 st.markdown("**📊 נתוני הקרן (לתיעוד)**")
                 col3, col4, col5 = st.columns(3)
@@ -796,22 +742,16 @@ def show_pipeline():
                     hurdle = r.get("preferred_return_pct")
                     st.metric("דמי ניהול", f"{mgmt}%" if mgmt else "—")
                     st.metric("Carry / Hurdle", f"{carry}% / {hurdle}%" if carry and hurdle else "—")
-
                 notes_default = f"גודל קרן: ${fund_size:,.0f}M | MOIC: {moic_low}x-{moic_high}x | IRR: {irr}% | מנהל AUM: ${r.get('aum_manager', 0)}B" if fund_size else ""
                 notes = st.text_area("הערות", value=notes_default)
-
                 if st.form_submit_button("✅ צור קרן Pipeline + גאנט", type="primary"):
                     try:
                         sb = get_supabase()
                         res = sb.table("pipeline_funds").insert({
-                            "name": fund_name,
-                            "manager": manager,
-                            "strategy": strategy,
+                            "name": fund_name, "manager": manager, "strategy": strategy,
                             "target_commitment": target_commitment * 1_000_000,
-                            "currency": currency,
-                            "target_close_date": str(target_close),
-                            "priority": priority,
-                            "notes": notes
+                            "currency": currency, "target_close_date": str(target_close),
+                            "priority": priority, "notes": notes
                         }).execute()
                         fund_id = res.data[0]["id"]
                         try:
@@ -825,7 +765,6 @@ def show_pipeline():
                     except Exception as e:
                         st.error(f"שגיאה: {e}")
 
-    # MANUAL ADD
     if st.session_state.get("show_add_pipeline"):
         st.divider()
         with st.form("add_pipeline_manual"):
@@ -868,9 +807,8 @@ def show_pipeline():
 
     for fund in pipeline:
         fid = fund["id"]
-        with st.expander(f"📋 {fund['name']} | {fund.get('strategy','')} | {fund.get('priority','').upper()} | סגירה: {fund.get('target_close_date','')}", expanded=False):
-            
-            # Action buttons
+        priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(fund.get("priority",""), "⚪")
+        with st.expander(f"{priority_emoji} {fund['name']} | {fund.get('strategy','')} | סגירה: {fund.get('target_close_date','')}", expanded=False):
             col_a, col_b, col_c = st.columns([1, 1, 4])
             with col_a:
                 if st.button("✏️ עריכה", key=f"edit_{fid}"):
@@ -879,7 +817,6 @@ def show_pipeline():
                 if st.button("🗑️ מחיקה", key=f"del_{fid}"):
                     st.session_state[f"confirm_delete_{fid}"] = True
 
-            # Confirm delete
             if st.session_state.get(f"confirm_delete_{fid}"):
                 st.warning(f"⚠️ למחוק את '{fund['name']}'? פעולה זו תמחק גם את כל משימות הגאנט.")
                 col_yes, col_no = st.columns(2)
@@ -899,7 +836,6 @@ def show_pipeline():
                         st.session_state.pop(f"confirm_delete_{fid}", None)
                         st.rerun()
 
-            # Edit form
             if st.session_state.get(f"editing_{fid}"):
                 with st.form(f"edit_form_{fid}"):
                     st.markdown("**✏️ עריכת פרטי קרן**")
@@ -909,7 +845,7 @@ def show_pipeline():
                         new_manager = st.text_input("מנהל", value=fund.get("manager",""))
                         strategy_opts = ["PE", "Credit", "Infrastructure", "Real Estate", "Hedge", "Venture"]
                         cur_strat = fund.get("strategy","PE")
-                        new_strategy = st.selectbox("אסטרטגיה", strategy_opts, 
+                        new_strategy = st.selectbox("אסטרטגיה", strategy_opts,
                             index=strategy_opts.index(cur_strat) if cur_strat in strategy_opts else 0)
                         new_geo = st.text_input("מיקוד גיאוגרפי", value=fund.get("geographic_focus","") or "")
                     with col2:
@@ -929,20 +865,15 @@ def show_pipeline():
                             default_date = datetime.date.today()
                         new_close = st.date_input("תאריך סגירה", value=default_date)
                     new_notes = st.text_area("הערות", value=fund.get("notes","") or "")
-                    
                     col_save, col_cancel = st.columns(2)
                     with col_save:
                         if st.form_submit_button("💾 שמור שינויים", type="primary"):
                             try:
                                 get_supabase().table("pipeline_funds").update({
-                                    "name": new_name,
-                                    "manager": new_manager,
-                                    "strategy": new_strategy,
-                                    "target_commitment": new_commitment,
-                                    "currency": new_currency,
-                                    "priority": new_priority,
-                                    "target_close_date": str(new_close),
-                                    "notes": new_notes
+                                    "name": new_name, "manager": new_manager,
+                                    "strategy": new_strategy, "target_commitment": new_commitment,
+                                    "currency": new_currency, "priority": new_priority,
+                                    "target_close_date": str(new_close), "notes": new_notes
                                 }).eq("id", fid).execute()
                                 st.success("✅ עודכן!")
                                 st.session_state.pop(f"editing_{fid}", None)
@@ -954,7 +885,6 @@ def show_pipeline():
                             st.session_state.pop(f"editing_{fid}", None)
                             st.rerun()
             else:
-                # Display mode
                 col1, col2, col3 = st.columns(3)
                 currency_sym = "€" if fund.get("currency") == "EUR" else "$"
                 with col1:
@@ -964,10 +894,8 @@ def show_pipeline():
                     st.metric("תאריך סגירה", str(fund.get("target_close_date", "")))
                 with col3:
                     st.metric("עדיפות", fund.get("priority", "").upper())
-                
                 if fund.get("notes"):
                     st.caption(f"📝 {fund['notes']}")
-
                 tasks = get_gantt_tasks(fund["id"])
                 if tasks:
                     show_gantt(tasks, fund)
@@ -985,17 +913,16 @@ def show_gantt(tasks, fund):
         "DD":       {"icon": "🟠", "color": "#ea580c", "bg": "#3b1a00"},
     }
     STATUS_CONFIG = {
-        "todo":        {"icon": "⬜", "label": "ממתין",     "color": "#64748b"},
-        "in_progress": {"icon": "🔄", "label": "בביצוע",    "color": "#3b82f6"},
-        "done":        {"icon": "✅", "label": "הושלם",     "color": "#22c55e"},
-        "blocked":     {"icon": "🚫", "label": "חסום",      "color": "#ef4444"},
+        "todo":        {"icon": "⬜", "label": "ממתין",  "color": "#64748b"},
+        "in_progress": {"icon": "🔄", "label": "בביצוע", "color": "#3b82f6"},
+        "done":        {"icon": "✅", "label": "הושלם",  "color": "#22c55e"},
+        "blocked":     {"icon": "🚫", "label": "חסום",   "color": "#ef4444"},
     }
     STATUS_LIST = ["todo", "in_progress", "done", "blocked"]
 
     sb = get_supabase()
     fid = fund["id"]
 
-    # ── Summary bar ──────────────────────────────────────────
     total = len(tasks)
     done_n = sum(1 for t in tasks if t.get("status") == "done")
     in_prog = sum(1 for t in tasks if t.get("status") == "in_progress")
@@ -1020,7 +947,6 @@ def show_gantt(tasks, fund):
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Gantt chart ───────────────────────────────────────────
     gantt_tasks_data = []
     today = date.today()
     for t in tasks:
@@ -1028,7 +954,6 @@ def show_gantt(tasks, fund):
             cat = t.get("category", "Admin")
             cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
             status = t.get("status", "todo")
-            # Color by status if done/blocked, else by category
             if status == "done":
                 bar_color = "#22c55e"
             elif status == "blocked":
@@ -1061,12 +986,10 @@ def show_gantt(tasks, fund):
                 hovertemplate=f"<b>{t['Task']}</b><br>{t['Start']} → {t['Finish']}<br>סטטוס: {t['Status']}<extra></extra>",
                 showlegend=False,
             ))
-        # Today line - use shape instead of vline to avoid plotly bug
         fig.add_shape(
             type="line",
             x0=str(today), x1=str(today),
-            y0=0, y1=1,
-            yref="paper",
+            y0=0, y1=1, yref="paper",
             line=dict(color="#f59e0b", width=1.5, dash="dash"),
         )
         fig.add_annotation(
@@ -1082,40 +1005,23 @@ def show_gantt(tasks, fund):
             plot_bgcolor="#0f172a",
             font=dict(color="#e2e8f0", size=11, family="Heebo"),
             margin=dict(l=10, r=20, t=20, b=30),
-            xaxis=dict(
-                type="date",
-                gridcolor="#1e293b",
-                tickformat="%d/%m/%y",
-                tickfont=dict(size=10),
-            ),
-            yaxis=dict(
-                gridcolor="#1e293b",
-                tickfont=dict(size=11),
-                automargin=True,
-            ),
+            xaxis=dict(type="date", gridcolor="#1e293b", tickformat="%d/%m/%y", tickfont=dict(size=10)),
+            yaxis=dict(gridcolor="#1e293b", tickfont=dict(size=11), automargin=True),
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── Checklist by category ─────────────────────────────────
     st.markdown("##### 📋 משימות לפי קטגוריה")
-
-    # Filter
     col_f1, col_f2 = st.columns([3, 1])
     with col_f2:
         show_done = st.toggle("הצג הושלם", value=False, key=f"show_done_{fid}")
 
     cats_order = ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"]
     for cat in cats_order:
-        cat_tasks = [t for t in tasks if t.get("category","").lower() == cat.lower()
-                     or t.get("category","") == cat]
+        cat_tasks = [t for t in tasks if t.get("category","") == cat]
         if not cat_tasks:
             continue
-        if not show_done:
-            visible = [t for t in cat_tasks if t.get("status") != "done"]
-        else:
-            visible = cat_tasks
-
-        if not visible and not show_done:
+        visible = cat_tasks if show_done else [t for t in cat_tasks if t.get("status") != "done"]
+        if not visible:
             continue
 
         cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
@@ -1146,8 +1052,10 @@ def show_gantt(tasks, fund):
             with col2:
                 st.caption(due)
             with col3:
+                # FIX: label must not be empty - use label_visibility="collapsed" to hide it visually
                 new_status = st.selectbox(
-                    "", STATUS_LIST,
+                    "סטטוס",
+                    STATUS_LIST,
                     index=STATUS_LIST.index(status) if status in STATUS_LIST else 0,
                     key=f"task_{t['id']}",
                     label_visibility="collapsed"
@@ -1159,14 +1067,9 @@ def show_gantt(tasks, fund):
                     except Exception as e:
                         st.error(f"שגיאה: {e}")
 
-# ============================================
-# REPORTS PAGE
-# ============================================
-
 def show_reports():
     st.title("📈 דוחות רבעוניים")
     funds = get_funds()
-
     if not funds:
         st.info("אין קרנות")
         return
@@ -1199,7 +1102,6 @@ def show_reports():
             rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f")
             irr = st.number_input("IRR %", step=0.1, format="%.1f")
             notes = st.text_area("הערות")
-
         if st.form_submit_button("שמור", type="primary"):
             try:
                 get_supabase().table("quarterly_reports").upsert({
