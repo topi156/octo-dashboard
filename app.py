@@ -10,7 +10,7 @@ import json
 import requests
 from supabase import create_client, Client
 
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     """Extract text from PDF using pymupdf."""
