@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v3.7 - app.py
-FOF LPs Management, Editable Gantt, Ultimate CSS Expander Arrow Fix
+OCTO FUND DASHBOARD v3.8 - app.py
+Plotly Duplicate Key Fix + Updated PE Strategies
 """
 
 import streamlit as st
@@ -48,7 +48,7 @@ Return ONLY a valid JSON object with these exact keys (use null only if truly no
 {{
 "fund_name": "full fund name including fund number",
 "manager": "management company name",
-"strategy": "one of: PE, Credit, Infrastructure, Real Estate, Hedge, Venture",
+"strategy": "one of: Growth, VC, Tech, Niche, Special Situations",
 "fund_size_target": number in millions USD (e.g. 2500 for $2.5B),
 "fund_size_hard_cap": number in millions USD or null,
 "currency": "USD or EUR",
@@ -107,22 +107,18 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&display=swap');
     
-    /* 1. פונט בסיס כללי */
     * {
         font-family: 'Heebo', sans-serif;
     }
 
-    /* 2. אכיפת פונט Heebo על טקסטים בצורה שלא דורסת את מעטפות האייקונים (SPANS מיוחדים) */
     p, label, h1, h2, h3, h4, h5, h6, a, li, input, textarea, button, [data-testid="stMetricValue"] {
         font-family: 'Heebo', sans-serif !important;
     }
 
-    /* 3. אכיפה על כותרות האקספנדר (הטקסט עצמו בלבד) */
     [data-testid="stExpander"] summary p {
         font-family: 'Heebo', sans-serif !important;
     }
 
-    /* 4. התיקון הסופי והקריטי לחצים ולאייקונים - מחזיר אותם חזרה למצב סמל ומסתיר עודפי טקסט */
     [data-testid="stExpanderToggleIcon"],
     [data-testid="stExpanderToggleIcon"] *,
     [data-testid="stIconMaterial"],
@@ -136,14 +132,12 @@ st.markdown("""
         letter-spacing: normal !important;
     }
 
-    /* חוסם גלישת טקסט מתוך רכיב האייקון למקרה של תקלה בדפדפן */
     [data-testid="stExpanderToggleIcon"] {
         max-width: 24px !important;
         overflow: hidden !important;
         white-space: nowrap !important;
     }
 
-    /* עיצוב המבנה המרכזי */
     .main { direction: rtl; }
     .stMarkdown, .stText, h1, h2, h3, p { direction: rtl; text-align: right; }
     .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], section[data-testid="stSidebar"] + div { 
@@ -152,7 +146,6 @@ st.markdown("""
     }
     p, span, label, div { color: #e2e8f0; }
 
-    /* עיצוב אקספנדר וכיווניות חץ */
     [data-testid="stExpander"] summary { 
         color: #e2e8f0 !important;
         direction: rtl !important;
@@ -168,20 +161,24 @@ st.markdown("""
         margin-bottom: 8px !important;
     }
 
-    /* תיקון צבעים ורקעים ל-Dropdown */
     [data-testid="stSelectbox"] > div > div,
-    [data-testid="stSelectbox"] > div > div > div { 
+    [data-testid="stSelectbox"] > div > div > div,
+    [data-testid="stSelectbox"] span:not(.material-symbols-rounded) { 
         background-color: #1e293b !important;
         color: #e2e8f0 !important;
         border-color: #334155 !important;
     }
     [data-baseweb="popover"],
     [data-baseweb="popover"] > div,
-    [data-baseweb="popover"] > div > div,
+    [data-baseweb="popover"] > div > div { background-color: #1e293b !important; }
     [data-baseweb="select"] > div,
     [data-baseweb="menu"],
     [data-baseweb="menu"] > div,
-    [data-baseweb="menu"] ul,
+    [data-baseweb="menu"] ul {
+        background-color: #1e293b !important;
+        border: 1px solid #334155 !important;
+    }
+    [data-baseweb="menu"] * { color: #e2e8f0 !important; }
     ul[data-testid="stSelectboxVirtualDropdown"],
     [role="listbox"],
     [role="listbox"] > div,
@@ -190,11 +187,11 @@ st.markdown("""
         border-color: #334155 !important;
     }
     [role="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
-    [role="option"]:hover, [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
+    [role="option"]:hover,
+    [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
     [role="option"] * { color: #e2e8f0 !important; background-color: transparent !important; }
     li[class*="option"], div[class*="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
 
-    /* Metric cards */
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         border: 1px solid #0f3460;
@@ -205,17 +202,26 @@ st.markdown("""
     [data-testid="metric-container"] label,
     [data-testid="metric-container"] div { color: #94a3b8 !important; }
     [data-testid="metric-container"] [data-testid="stMetricValue"] { 
-        color: #ffffff !important; font-weight: 700 !important; font-size: 1.3rem !important; 
-        word-break: break-word !important; white-space: normal !important; line-height: 1.2 !important;
+        color: #ffffff !important; 
+        font-weight: 700 !important; 
+        font-size: 1.3rem !important; 
+        word-break: break-word !important; 
+        white-space: normal !important; 
+        line-height: 1.2 !important;
     }
 
     [data-testid="stSidebar"] { background: #0f1117 !important; }
+
     [data-testid="stTabs"] [role="tab"] { color: #94a3b8 !important; }
     [data-testid="stTabs"] [role="tab"][aria-selected="true"] { color: #ffffff !important; border-bottom-color: #3b82f6 !important; }
 
-    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
-    [data-testid="stTextArea"] textarea, [data-testid="stDateInput"] input { 
-        background: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important;
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stDateInput"] input { 
+        background: #1e293b !important; 
+        color: #e2e8f0 !important;
+        border-color: #334155 !important;
     }
 
     [data-testid="stDataFrame"] { color: #e2e8f0 !important; }
@@ -270,7 +276,6 @@ def get_gantt_tasks(pipeline_fund_id):
         return get_supabase().table("gantt_tasks").select("*").eq("pipeline_fund_id", pipeline_fund_id).order("start_date").execute().data or []
     except: return []
 
-# --- LPs Functions (FOF Level) ---
 def get_investors():
     try:
         return get_supabase().table("investors").select("*").execute().data or []
@@ -328,7 +333,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 2.7 | פברואר 2026")
+        st.caption("גרסה 2.8 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -411,7 +416,6 @@ def show_overview():
         if not future_calls_found:
             st.info("💡 הוסף Calls עתידיים כדי לראות תחזית כאן")
 
-
 def show_investors():
     st.title("👥 ניהול משקיעים וקריאות להון (Master Fund)")
     
@@ -457,7 +461,6 @@ def show_investors():
                     if st.button("🗑️", key=f"del_inv_btn_{inv['id']}", help="מחיקת משקיע"):
                         st.session_state[f"confirm_del_inv_{inv['id']}"] = True
                 
-                # תהליך מחיקה
                 if st.session_state.get(f"confirm_del_inv_{inv['id']}"):
                     st.warning(f"למחוק את '{inv['name']}'?")
                     cd1, cd2 = st.columns(2)
@@ -474,7 +477,6 @@ def show_investors():
                             st.session_state.pop(f"confirm_del_inv_{inv['id']}", None)
                             st.rerun()
 
-                # תהליך עריכה
                 if st.session_state.get(f"editing_inv_{inv['id']}"):
                     with st.form(f"edit_inv_form_{inv['id']}"):
                         new_name = st.text_input("שם משקיע", value=inv["name"])
@@ -729,8 +731,8 @@ def show_fund_detail(fund):
             with col1:
                 new_name = st.text_input("שם הקרן", value=fund.get("name",""))
                 new_manager = st.text_input("מנהל", value=fund.get("manager","") or "")
-                strategy_opts = ["PE","Credit","Infrastructure","Real Estate","Hedge","Venture"]
-                cur_s = fund.get("strategy","PE")
+                strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations"]
+                cur_s = fund.get("strategy","Growth")
                 new_strategy = st.selectbox("אסטרטגיה", strategy_opts,
                     index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
             with col2:
@@ -809,7 +811,8 @@ def show_fund_detail(fund):
                     color_discrete_sequence=["#0f3460"]
                 )
                 fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
-                st.plotly_chart(fig, use_container_width=True)
+                # הוספת מזהה ייחודי לגרף
+                st.plotly_chart(fig, use_container_width=True, key=f"calls_chart_{fund['id']}")
         else:
             st.info("אין Capital Calls עדיין")
 
@@ -931,7 +934,8 @@ def show_fund_detail(fund):
                     fig.add_trace(go.Scatter(x=labels, y=[r.get("dpi") for r in reports], name="DPI", line=dict(color="#60a5fa")))
                 fig.update_layout(title="ביצועים לאורך זמן", paper_bgcolor='rgba(0,0,0,0)',
                                   plot_bgcolor='rgba(0,0,0,0)', font_color='white')
-                st.plotly_chart(fig, use_container_width=True)
+                # הוספת מזהה ייחודי לגרף
+                st.plotly_chart(fig, use_container_width=True, key=f"perf_chart_{fund['id']}")
         else:
             st.info("אין דוחות רבעוניים עדיין")
 
@@ -974,8 +978,8 @@ def show_pipeline():
                 with col1:
                     fund_name = st.text_input("שם הקרן", value=r.get("fund_name") or "")
                     manager = st.text_input("מנהל", value=r.get("manager") or "")
-                    strategy_options = ["PE", "Credit", "Infrastructure", "Real Estate", "Hedge", "Venture"]
-                    ai_strategy = r.get("strategy", "PE")
+                    strategy_options = ["Growth", "VC", "Tech", "Niche", "Special Situations"]
+                    ai_strategy = r.get("strategy", "Growth")
                     strategy_idx = strategy_options.index(ai_strategy) if ai_strategy in strategy_options else 0
                     strategy = st.selectbox("אסטרטגיה", strategy_options, index=strategy_idx)
                     geographic = st.text_input("מיקוד גיאוגרפי", value=r.get("geographic_focus") or "")
@@ -1036,7 +1040,7 @@ def show_pipeline():
             with col1:
                 name = st.text_input("שם הקרן")
                 manager = st.text_input("מנהל")
-                strategy = st.selectbox("אסטרטגיה", ["PE", "Credit", "Infrastructure", "Real Estate", "Hedge", "Venture"])
+                strategy = st.selectbox("אסטרטגיה", ["Growth", "VC", "Tech", "Niche", "Special Situations"])
             with col2:
                 target_commitment = st.number_input("יעד השקעה", min_value=0.0)
                 currency = st.selectbox("מטבע", ["USD", "EUR"])
@@ -1106,8 +1110,8 @@ def show_pipeline():
                     with col1:
                         new_name = st.text_input("שם הקרן", value=fund.get("name",""))
                         new_manager = st.text_input("מנהל", value=fund.get("manager",""))
-                        strategy_opts = ["PE", "Credit", "Infrastructure", "Real Estate", "Hedge", "Venture"]
-                        cur_strat = fund.get("strategy","PE")
+                        strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations"]
+                        cur_strat = fund.get("strategy","Growth")
                         new_strategy = st.selectbox("אסטרטגיה", strategy_opts,
                             index=strategy_opts.index(cur_strat) if cur_strat in strategy_opts else 0)
                         new_geo = st.text_input("מיקוד גיאוגרפי", value=fund.get("geographic_focus","") or "")
@@ -1280,7 +1284,8 @@ def show_gantt(tasks, fund):
             xaxis=dict(type="date", gridcolor="#1e293b", tickformat="%d/%m/%y", tickfont=dict(size=13)),
             yaxis=dict(gridcolor="#1e293b", tickfont=dict(size=14), automargin=True),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        # הוספת מזהה ייחודי לגרף הגאנט לפי ה-ID של הקרן!
+        st.plotly_chart(fig, use_container_width=True, key=f"gantt_chart_{fid}")
 
     st.markdown("##### 📋 משימות לפי קטגוריה (ניתן לערוך תאריכים וסטטוס)")
     col_f1, col_f2 = st.columns([3, 1])
