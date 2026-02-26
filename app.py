@@ -110,6 +110,12 @@ st.markdown("""
     .main { direction: rtl; }
     .stMarkdown, .stText, h1, h2, h3, p { direction: rtl; text-align: right; }
 
+    /* Force dark background */
+    .stApp { background-color: #0f1117 !important; }
+    [data-testid="stAppViewContainer"] { background-color: #0f1117 !important; }
+    [data-testid="stHeader"] { background-color: #0f1117 !important; }
+    section[data-testid="stSidebar"] + div { background-color: #0f1117 !important; }
+
     /* Global text color - white everywhere */
     .stApp, .main, [data-testid="stAppViewContainer"] { color: #e2e8f0 !important; }
     p, span, label, div { color: #e2e8f0; }
@@ -1017,8 +1023,11 @@ def show_gantt(tasks, fund):
     if gantt_tasks_data:
         fig = go.Figure()
         for i, t in enumerate(reversed(gantt_tasks_data)):
+            start_dt = datetime.fromisoformat(t["Start"])
+            finish_dt = datetime.fromisoformat(t["Finish"])
+            duration = (finish_dt - start_dt).days
             fig.add_trace(go.Bar(
-                x=[(datetime.fromisoformat(t["Finish"]) - datetime.fromisoformat(t["Start"])).days],
+                x=[duration],
                 y=[t["Task"]],
                 base=[t["Start"]],
                 orientation="h",
@@ -1026,9 +1035,20 @@ def show_gantt(tasks, fund):
                 hovertemplate=f"<b>{t['Task']}</b><br>{t['Start']} → {t['Finish']}<br>סטטוס: {t['Status']}<extra></extra>",
                 showlegend=False,
             ))
-        # Today line
-        fig.add_vline(x=str(today), line_dash="dash", line_color="#f59e0b", line_width=1.5,
-                      annotation_text="היום", annotation_font_color="#f59e0b", annotation_font_size=11)
+        # Today line - use shape instead of vline to avoid plotly bug
+        fig.add_shape(
+            type="line",
+            x0=str(today), x1=str(today),
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color="#f59e0b", width=1.5, dash="dash"),
+        )
+        fig.add_annotation(
+            x=str(today), y=1, yref="paper",
+            text="היום", showarrow=False,
+            font=dict(color="#f59e0b", size=11),
+            yanchor="bottom"
+        )
         fig.update_layout(
             height=max(300, len(gantt_tasks_data) * 28 + 80),
             barmode="overlay",
