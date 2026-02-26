@@ -7,17 +7,29 @@ import streamlit as st
 import hashlib
 import pandas as pd
 import json
-import base64
 import requests
 from supabase import create_client, Client
 
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = "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"
+
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text from PDF using pymupdf."""
+    import fitz  # pymupdf
+    import io
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    doc.close()
+    # Limit to first 8000 chars to avoid token limits
+    return text[:8000]
 
 def analyze_pdf_with_ai(pdf_bytes: bytes) -> dict:
-    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
-    prompt = """You are a private equity analyst. Analyze this fund presentation PDF and extract the following information.
+    pdf_text = extract_pdf_text(pdf_bytes)
+    
+    prompt = f"""You are a private equity analyst. Analyze this fund presentation text and extract key information.
 Return ONLY a valid JSON object with these exact keys (use null if not found):
-{
+{{
   "fund_name": "full fund name",
   "manager": "management company name",
   "strategy": "one of: PE, Credit, Infrastructure, Real Estate, Hedge, Venture",
@@ -36,21 +48,18 @@ Return ONLY a valid JSON object with these exact keys (use null if not found):
   "portfolio_companies_target": null,
   "aum_manager": null,
   "key_highlights": null
-}
+}}
 fund_size_target and fund_size_hard_cap are numbers in millions USD.
 target_irr_gross is a number like 25 (for 25%).
 aum_manager is in billions.
-Return ONLY the JSON, no markdown, no extra text."""
+Return ONLY the JSON, no markdown, no extra text.
+
+FUND PRESENTATION TEXT:
+{pdf_text}"""
 
     payload = {
         "model": "anthropic/claude-3.5-sonnet",
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{pdf_b64}"}}
-            ]
-        }],
+        "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 1500
     }
     headers = {
