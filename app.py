@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v3.6 - app.py
-FOF LPs Management, Editable Gantt, CSS Fixes, + Investors Edit/Delete
+OCTO FUND DASHBOARD v3.7 - app.py
+FOF LPs Management, Editable Gantt, Ultimate CSS Expander Arrow Fix
 """
 
 import streamlit as st
@@ -107,25 +107,52 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&display=swap');
     
-    html, body, p, div, label, h1, h2, h3, h4, h5, h6, a, ul, li, 
-    span:not(.material-symbols-rounded):not(.material-icons), 
-    button, input, select, textarea {
+    /* 1. פונט בסיס כללי */
+    * {
+        font-family: 'Heebo', sans-serif;
+    }
+
+    /* 2. אכיפת פונט Heebo על טקסטים בצורה שלא דורסת את מעטפות האייקונים (SPANS מיוחדים) */
+    p, label, h1, h2, h3, h4, h5, h6, a, li, input, textarea, button, [data-testid="stMetricValue"] {
         font-family: 'Heebo', sans-serif !important;
     }
-    
-    .material-symbols-rounded, .material-icons {
+
+    /* 3. אכיפה על כותרות האקספנדר (הטקסט עצמו בלבד) */
+    [data-testid="stExpander"] summary p {
+        font-family: 'Heebo', sans-serif !important;
+    }
+
+    /* 4. התיקון הסופי והקריטי לחצים ולאייקונים - מחזיר אותם חזרה למצב סמל ומסתיר עודפי טקסט */
+    [data-testid="stExpanderToggleIcon"],
+    [data-testid="stExpanderToggleIcon"] *,
+    [data-testid="stIconMaterial"],
+    .material-symbols-rounded,
+    .material-icons,
+    i, svg {
         font-family: 'Material Symbols Rounded', 'Material Icons' !important;
         font-feature-settings: 'liga' !important;
+        -webkit-font-feature-settings: 'liga' !important;
+        text-transform: none !important;
+        letter-spacing: normal !important;
     }
-    
+
+    /* חוסם גלישת טקסט מתוך רכיב האייקון למקרה של תקלה בדפדפן */
+    [data-testid="stExpanderToggleIcon"] {
+        max-width: 24px !important;
+        overflow: hidden !important;
+        white-space: nowrap !important;
+    }
+
+    /* עיצוב המבנה המרכזי */
     .main { direction: rtl; }
     .stMarkdown, .stText, h1, h2, h3, p { direction: rtl; text-align: right; }
-    .stApp { background-color: #0f1117 !important; }
-    [data-testid="stAppViewContainer"] { background-color: #0f1117 !important; }
-    [data-testid="stHeader"] { background-color: #0f1117 !important; }
-    section[data-testid="stSidebar"] + div { background-color: #0f1117 !important; }
-    .stApp, .main, [data-testid="stAppViewContainer"] { color: #e2e8f0 !important; }
-    
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], section[data-testid="stSidebar"] + div { 
+        background-color: #0f1117 !important; 
+        color: #e2e8f0 !important;
+    }
+    p, span, label, div { color: #e2e8f0; }
+
+    /* עיצוב אקספנדר וכיווניות חץ */
     [data-testid="stExpander"] summary { 
         color: #e2e8f0 !important;
         direction: rtl !important;
@@ -141,24 +168,20 @@ st.markdown("""
         margin-bottom: 8px !important;
     }
 
+    /* תיקון צבעים ורקעים ל-Dropdown */
     [data-testid="stSelectbox"] > div > div,
-    [data-testid="stSelectbox"] > div > div > div,
-    [data-testid="stSelectbox"] span:not(.material-symbols-rounded) { 
+    [data-testid="stSelectbox"] > div > div > div { 
         background-color: #1e293b !important;
         color: #e2e8f0 !important;
         border-color: #334155 !important;
     }
     [data-baseweb="popover"],
     [data-baseweb="popover"] > div,
-    [data-baseweb="popover"] > div > div { background-color: #1e293b !important; }
+    [data-baseweb="popover"] > div > div,
     [data-baseweb="select"] > div,
     [data-baseweb="menu"],
     [data-baseweb="menu"] > div,
-    [data-baseweb="menu"] ul {
-        background-color: #1e293b !important;
-        border: 1px solid #334155 !important;
-    }
-    [data-baseweb="menu"] * { color: #e2e8f0 !important; }
+    [data-baseweb="menu"] ul,
     ul[data-testid="stSelectboxVirtualDropdown"],
     [role="listbox"],
     [role="listbox"] > div,
@@ -167,11 +190,11 @@ st.markdown("""
         border-color: #334155 !important;
     }
     [role="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
-    [role="option"]:hover,
-    [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
+    [role="option"]:hover, [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
     [role="option"] * { color: #e2e8f0 !important; background-color: transparent !important; }
     li[class*="option"], div[class*="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
 
+    /* Metric cards */
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         border: 1px solid #0f3460;
@@ -182,25 +205,17 @@ st.markdown("""
     [data-testid="metric-container"] label,
     [data-testid="metric-container"] div { color: #94a3b8 !important; }
     [data-testid="metric-container"] [data-testid="stMetricValue"] { 
-        color: #ffffff !important; 
-        font-weight: 700 !important; 
-        font-size: 1.3rem !important; 
-        word-break: break-word !important; 
-        white-space: normal !important; 
-        line-height: 1.2 !important;
+        color: #ffffff !important; font-weight: 700 !important; font-size: 1.3rem !important; 
+        word-break: break-word !important; white-space: normal !important; line-height: 1.2 !important;
     }
 
     [data-testid="stSidebar"] { background: #0f1117 !important; }
     [data-testid="stTabs"] [role="tab"] { color: #94a3b8 !important; }
     [data-testid="stTabs"] [role="tab"][aria-selected="true"] { color: #ffffff !important; border-bottom-color: #3b82f6 !important; }
 
-    [data-testid="stTextInput"] input,
-    [data-testid="stNumberInput"] input,
-    [data-testid="stTextArea"] textarea,
-    [data-testid="stDateInput"] input { 
-        background: #1e293b !important; 
-        color: #e2e8f0 !important;
-        border-color: #334155 !important;
+    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+    [data-testid="stTextArea"] textarea, [data-testid="stDateInput"] input { 
+        background: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important;
     }
 
     [data-testid="stDataFrame"] { color: #e2e8f0 !important; }
@@ -313,7 +328,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 2.6 | פברואר 2026")
+        st.caption("גרסה 2.7 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
