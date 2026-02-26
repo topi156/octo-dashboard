@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v3.8 - app.py
-Plotly Duplicate Key Fix + Updated PE Strategies
+OCTO FUND DASHBOARD v3.9 - app.py
+Add New Fund from Portfolio + Edit Support for Geography & Investment Date
 """
 
 import streamlit as st
@@ -333,7 +333,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 2.8 | פברואר 2026")
+        st.caption("גרסה 2.9 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -666,10 +666,47 @@ def show_investors():
 
 def show_portfolio():
     st.title("📁 תיק השקעות")
+    
+    # --- הוספת קרן חדשה ישירות לתיק ---
+    with st.expander("➕ הוסף קרן חדשה לתיק"):
+        with st.form("add_new_fund_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_name = st.text_input("שם הקרן")
+                new_manager = st.text_input("מנהל הקרן")
+                strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations"]
+                new_strategy = st.selectbox("אסטרטגיה", strategy_opts)
+                new_geo = st.text_input("מיקוד גיאוגרפי")
+            with col2:
+                new_commitment = st.number_input("סכום התחייבות", min_value=0.0)
+                new_currency = st.selectbox("מטבע", ["USD", "EUR"])
+                new_date = st.date_input("תאריך השקעה")
+                status_opts = ["active", "closed", "exited"]
+                new_status = st.selectbox("סטטוס", status_opts)
+                
+            if st.form_submit_button("💾 שמור קרן חדשה", type="primary"):
+                try:
+                    get_supabase().table("funds").insert({
+                        "name": new_name,
+                        "manager": new_manager,
+                        "strategy": new_strategy,
+                        "geographic_focus": new_geo,
+                        "commitment": new_commitment,
+                        "currency": new_currency,
+                        "vintage_year": new_date.year,
+                        "investment_date": str(new_date),
+                        "status": new_status
+                    }).execute()
+                    st.success("✅ קרן חדשה נוספה בהצלחה! היא מופיעה כעת בלשוניות למטה.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"שגיאה (האם הרצת את פקודת ה-SQL?): {e}")
+
     funds = get_funds()
     if not funds:
         st.info("אין קרנות במערכת")
         return
+    
     tabs = st.tabs([f["name"] for f in funds])
     for i, fund in enumerate(funds):
         with tabs[i]:
@@ -735,6 +772,7 @@ def show_fund_detail(fund):
                 cur_s = fund.get("strategy","Growth")
                 new_strategy = st.selectbox("אסטרטגיה", strategy_opts,
                     index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
+                new_geo = st.text_input("מיקוד גיאוגרפי", value=fund.get("geographic_focus","") or "")
             with col2:
                 new_commitment = st.number_input("התחייבות", value=float(commitment), min_value=0.0)
                 cur_cur = fund.get("currency","USD")
@@ -743,7 +781,14 @@ def show_fund_detail(fund):
                 cur_st = fund.get("status","active")
                 new_status = st.selectbox("סטטוס", status_opts,
                     index=status_opts.index(cur_st) if cur_st in status_opts else 0)
-                new_vintage = st.number_input("ויינטג'", value=int(fund.get("vintage_year") or 2020), min_value=2000, max_value=2030)
+                
+                cur_date = fund.get("investment_date")
+                try:
+                    default_date = datetime.fromisoformat(str(cur_date)).date() if cur_date else date(int(fund.get("vintage_year") or 2020), 1, 1)
+                except:
+                    default_date = date.today()
+                new_inv_date = st.date_input("תאריך השקעה", value=default_date)
+
             c1, c2 = st.columns(2)
             with c1:
                 if st.form_submit_button("💾 שמור", type="primary"):
@@ -752,7 +797,9 @@ def show_fund_detail(fund):
                             "name": new_name, "manager": new_manager,
                             "strategy": new_strategy, "commitment": new_commitment,
                             "currency": new_currency, "status": new_status,
-                            "vintage_year": new_vintage
+                            "vintage_year": new_inv_date.year,
+                            "geographic_focus": new_geo,
+                            "investment_date": str(new_inv_date)
                         }).eq("id", fund["id"]).execute()
                         st.success("✅ עודכן!")
                         st.session_state.pop(f"editing_fund_{fund['id']}", None)
@@ -811,7 +858,6 @@ def show_fund_detail(fund):
                     color_discrete_sequence=["#0f3460"]
                 )
                 fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
-                # הוספת מזהה ייחודי לגרף
                 st.plotly_chart(fig, use_container_width=True, key=f"calls_chart_{fund['id']}")
         else:
             st.info("אין Capital Calls עדיין")
@@ -934,7 +980,6 @@ def show_fund_detail(fund):
                     fig.add_trace(go.Scatter(x=labels, y=[r.get("dpi") for r in reports], name="DPI", line=dict(color="#60a5fa")))
                 fig.update_layout(title="ביצועים לאורך זמן", paper_bgcolor='rgba(0,0,0,0)',
                                   plot_bgcolor='rgba(0,0,0,0)', font_color='white')
-                # הוספת מזהה ייחודי לגרף
                 st.plotly_chart(fig, use_container_width=True, key=f"perf_chart_{fund['id']}")
         else:
             st.info("אין דוחות רבעוניים עדיין")
@@ -1284,7 +1329,6 @@ def show_gantt(tasks, fund):
             xaxis=dict(type="date", gridcolor="#1e293b", tickformat="%d/%m/%y", tickfont=dict(size=13)),
             yaxis=dict(gridcolor="#1e293b", tickfont=dict(size=14), automargin=True),
         )
-        # הוספת מזהה ייחודי לגרף הגאנט לפי ה-ID של הקרן!
         st.plotly_chart(fig, use_container_width=True, key=f"gantt_chart_{fid}")
 
     st.markdown("##### 📋 משימות לפי קטגוריה (ניתן לערוך תאריכים וסטטוס)")
