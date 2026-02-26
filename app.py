@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v3.5 - app.py
-FOF LPs Management, Bulletproof CSS Icon Fix, Gantt Keys Fix, Editable Task Dates
+OCTO FUND DASHBOARD v3.6 - app.py
+FOF LPs Management, Editable Gantt, CSS Fixes, + Investors Edit/Delete
 """
 
 import streamlit as st
@@ -107,16 +107,12 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&display=swap');
     
-    /* Apply Heebo font globally, EXCEPT on elements that are known to be icons.
-       This prevents the "keyboard_arrow_down" text bleeding issue.
-    */
     html, body, p, div, label, h1, h2, h3, h4, h5, h6, a, ul, li, 
     span:not(.material-symbols-rounded):not(.material-icons), 
     button, input, select, textarea {
         font-family: 'Heebo', sans-serif !important;
     }
     
-    /* Force Streamlit Material Icons to behave normally */
     .material-symbols-rounded, .material-icons {
         font-family: 'Material Symbols Rounded', 'Material Icons' !important;
         font-feature-settings: 'liga' !important;
@@ -130,7 +126,6 @@ st.markdown("""
     section[data-testid="stSidebar"] + div { background-color: #0f1117 !important; }
     .stApp, .main, [data-testid="stAppViewContainer"] { color: #e2e8f0 !important; }
     
-    /* Expander override */
     [data-testid="stExpander"] summary { 
         color: #e2e8f0 !important;
         direction: rtl !important;
@@ -146,7 +141,6 @@ st.markdown("""
         margin-bottom: 8px !important;
     }
 
-    /* Selectbox + Dropdown */
     [data-testid="stSelectbox"] > div > div,
     [data-testid="stSelectbox"] > div > div > div,
     [data-testid="stSelectbox"] span:not(.material-symbols-rounded) { 
@@ -178,7 +172,6 @@ st.markdown("""
     [role="option"] * { color: #e2e8f0 !important; background-color: transparent !important; }
     li[class*="option"], div[class*="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
 
-    /* Metric cards */
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         border: 1px solid #0f3460;
@@ -197,14 +190,10 @@ st.markdown("""
         line-height: 1.2 !important;
     }
 
-    /* Sidebar */
     [data-testid="stSidebar"] { background: #0f1117 !important; }
-
-    /* Tabs */
     [data-testid="stTabs"] [role="tab"] { color: #94a3b8 !important; }
     [data-testid="stTabs"] [role="tab"][aria-selected="true"] { color: #ffffff !important; border-bottom-color: #3b82f6 !important; }
 
-    /* Inputs */
     [data-testid="stTextInput"] input,
     [data-testid="stNumberInput"] input,
     [data-testid="stTextArea"] textarea,
@@ -324,7 +313,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 2.5 | פברואר 2026")
+        st.caption("גרסה 2.6 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -412,32 +401,89 @@ def show_investors():
     st.title("👥 ניהול משקיעים וקריאות להון (Master Fund)")
     
     currency_sym = "$" 
+    sb = get_supabase()
 
     investors = get_investors()
     lp_calls = get_lp_calls()
     payments = get_lp_payments()
 
-    with st.expander("➕ הוסף משקיע חדש לקרן (FOF)"):
-        with st.form("add_lp_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                inv_name = st.text_input("שם משקיע")
-            with c2:
-                inv_commit = st.number_input(f"סכום התחייבות ({currency_sym})", min_value=0.0)
-            if st.form_submit_button("שמור משקיע", type="primary"):
-                try:
-                    get_supabase().table("investors").insert({"name": inv_name, "commitment": inv_commit}).execute()
-                    st.success("משקיע נוסף!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"שגיאה: {e}")
+    col_add_inv, col_manage_inv = st.columns(2)
+    
+    with col_add_inv:
+        with st.expander("➕ הוסף משקיע חדש לקרן (FOF)"):
+            with st.form("add_lp_form"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    inv_name = st.text_input("שם משקיע")
+                with c2:
+                    inv_commit = st.number_input(f"סכום התחייבות ({currency_sym})", min_value=0.0)
+                if st.form_submit_button("שמור משקיע", type="primary"):
+                    try:
+                        sb.table("investors").insert({"name": inv_name, "commitment": inv_commit}).execute()
+                        st.success("משקיע נוסף!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"שגיאה: {e}")
 
+    with col_manage_inv:
+        with st.expander("⚙️ ניהול משקיעים קיימים (עריכה / מחיקה)"):
+            if not investors:
+                st.write("אין משקיעים במערכת.")
+            for inv in investors:
+                c1, c2, c3, c4 = st.columns([4, 3, 1, 1])
+                with c1:
+                    st.write(f"**{inv['name']}**")
+                with c2:
+                    st.write(format_currency(inv.get("commitment", 0), currency_sym))
+                with c3:
+                    if st.button("✏️", key=f"edit_inv_btn_{inv['id']}", help="עריכת משקיע"):
+                        st.session_state[f"editing_inv_{inv['id']}"] = True
+                with c4:
+                    if st.button("🗑️", key=f"del_inv_btn_{inv['id']}", help="מחיקת משקיע"):
+                        st.session_state[f"confirm_del_inv_{inv['id']}"] = True
+                
+                # תהליך מחיקה
+                if st.session_state.get(f"confirm_del_inv_{inv['id']}"):
+                    st.warning(f"למחוק את '{inv['name']}'?")
+                    cd1, cd2 = st.columns(2)
+                    with cd1:
+                        if st.button("✅ כן", key=f"yes_del_inv_{inv['id']}"):
+                            try:
+                                sb.table("investors").delete().eq("id", inv["id"]).execute()
+                                st.session_state.pop(f"confirm_del_inv_{inv['id']}", None)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"שגיאה: {e}")
+                    with cd2:
+                        if st.button("❌ ביטול", key=f"no_del_inv_{inv['id']}"):
+                            st.session_state.pop(f"confirm_del_inv_{inv['id']}", None)
+                            st.rerun()
+
+                # תהליך עריכה
+                if st.session_state.get(f"editing_inv_{inv['id']}"):
+                    with st.form(f"edit_inv_form_{inv['id']}"):
+                        new_name = st.text_input("שם משקיע", value=inv["name"])
+                        new_commit = st.number_input("סכום התחייבות", value=float(inv.get("commitment", 0)))
+                        ce1, ce2 = st.columns(2)
+                        with ce1:
+                            if st.form_submit_button("💾 שמור שינויים"):
+                                try:
+                                    sb.table("investors").update({"name": new_name, "commitment": new_commit}).eq("id", inv["id"]).execute()
+                                    st.session_state.pop(f"editing_inv_{inv['id']}", None)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"שגיאה: {e}")
+                        with ce2:
+                            if st.form_submit_button("❌ סגור"):
+                                st.session_state.pop(f"editing_inv_{inv['id']}", None)
+                                st.rerun()
+                    st.divider()
+
+    st.divider()
+    st.markdown("### 📋 טבלת העברות משקיעים (סמן V להעברה)")
     if not investors:
         st.info("אין משקיעים מוגדרים. הוסף משקיע למעלה.")
         return
-
-    st.divider()
-    st.markdown("### טבלת משקיעים (סמן V להעברה)")
 
     data = []
     col_mapping = {}
@@ -470,7 +516,6 @@ def show_investors():
     )
 
     if st.button("💾 שמור סטטוס העברות", type="primary"):
-        sb = get_supabase()
         try:
             for index, row in edited_df.iterrows():
                 inv_id = row["id"]
@@ -526,28 +571,81 @@ def show_investors():
             st.info("אין קריאות פעילות עדיין.")
 
     st.divider()
-    st.markdown("### ➕ קריאה חדשה לכסף (Capital Call)")
-    with st.form("new_global_lp_call"):
-        c1, c2, c3 = st.columns([2, 2, 1])
-        with c1:
+    st.markdown("### ➕ ניהול קריאות לכסף (Capital Calls)")
+    
+    col_call_add, col_call_manage = st.columns([1, 1])
+    
+    with col_call_add:
+        with st.form("new_global_lp_call"):
+            st.markdown("**יצירת קריאה חדשה**")
             new_call_date = st.date_input("תאריך קריאה")
-        with c2:
             new_call_pct = st.number_input("אחוז מההתחייבות (%)", min_value=0.0, max_value=100.0, step=0.1)
-        with c3:
-            st.markdown("<br>", unsafe_allow_html=True)
-            submitted = st.form_submit_button("הוסף קריאה", use_container_width=True)
-            
-        if submitted:
-            try:
-                get_supabase().table("lp_calls").insert({
-                    "call_date": str(new_call_date),
-                    "call_pct": new_call_pct
-                }).execute()
-                st.success("✅ קריאה חדשה נוספה לטבלה!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"שגיאה: {e}")
+            if st.form_submit_button("הוסף קריאה", use_container_width=True):
+                try:
+                    sb.table("lp_calls").insert({
+                        "call_date": str(new_call_date),
+                        "call_pct": new_call_pct
+                    }).execute()
+                    st.success("✅ קריאה חדשה נוספה לטבלה!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
 
+    with col_call_manage:
+        with st.expander("⚙️ קריאות קיימות (עריכה / מחיקה)"):
+            if not lp_calls:
+                st.write("אין קריאות קיימות.")
+            for c in lp_calls:
+                lc1, lc2, lc3, lc4 = st.columns([3, 2, 1, 1])
+                with lc1:
+                    st.write(c['call_date'])
+                with lc2:
+                    st.write(f"{c['call_pct']}%")
+                with lc3:
+                    if st.button("✏️", key=f"edit_lpc_btn_{c['id']}"):
+                        st.session_state[f"editing_lpc_{c['id']}"] = True
+                with lc4:
+                    if st.button("🗑️", key=f"del_lpc_btn_{c['id']}"):
+                        st.session_state[f"confirm_del_lpc_{c['id']}"] = True
+                
+                if st.session_state.get(f"confirm_del_lpc_{c['id']}"):
+                    st.warning("למחוק קריאה זו?")
+                    d_c1, d_c2 = st.columns(2)
+                    with d_c1:
+                        if st.button("✅ כן", key=f"yes_del_lpc_{c['id']}"):
+                            try:
+                                sb.table("lp_calls").delete().eq("id", c["id"]).execute()
+                                st.session_state.pop(f"confirm_del_lpc_{c['id']}", None)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"שגיאה: {e}")
+                    with d_c2:
+                        if st.button("❌ ביטול", key=f"no_del_lpc_{c['id']}"):
+                            st.session_state.pop(f"confirm_del_lpc_{c['id']}", None)
+                            st.rerun()
+
+                if st.session_state.get(f"editing_lpc_{c['id']}"):
+                    with st.form(f"edit_lpc_form_{c['id']}"):
+                        try:
+                            def_date = datetime.fromisoformat(str(c['call_date'])).date()
+                        except:
+                            def_date = date.today()
+                        edit_date = st.date_input("תאריך", value=def_date)
+                        edit_pct = st.number_input("אחוז", value=float(c['call_pct']))
+                        e_c1, e_c2 = st.columns(2)
+                        with e_c1:
+                            if st.form_submit_button("💾 שמור"):
+                                try:
+                                    sb.table("lp_calls").update({"call_date": str(edit_date), "call_pct": edit_pct}).eq("id", c["id"]).execute()
+                                    st.session_state.pop(f"editing_lpc_{c['id']}", None)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"שגיאה: {e}")
+                        with e_c2:
+                            if st.form_submit_button("❌ סגור"):
+                                st.session_state.pop(f"editing_lpc_{c['id']}", None)
+                                st.rerun()
+                    st.divider()
 
 def show_portfolio():
     st.title("📁 תיק השקעות")
