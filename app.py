@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v4.5 - app.py
-Pipeline Enhancements: Millions Formatting, Inline Task Editing, Add Tasks
+OCTO FUND DASHBOARD v4.6 - app.py
+Gantt Chart Visibility Improvements: Done Tasks Display + Single-day Task Fix
 """
 
 import streamlit as st
@@ -9,7 +9,7 @@ import pandas as pd
 import json
 import requests
 import io
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from supabase import create_client, Client
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
@@ -345,7 +345,6 @@ def check_and_show_alerts():
     funds_dict = {f["id"]: f for f in get_funds()}
     pipe_dict = {f["id"]: f["name"] for f in get_pipeline_funds()}
 
-    # 1. Capital Calls (Portfolio)
     for cc in get_capital_calls():
         if not cc.get("payment_date"): continue
         try:
@@ -378,7 +377,6 @@ def check_and_show_alerts():
                     st.toast(f"🔔 מתקרב: קריאה לכסף בקרן {fname} בעוד {days_left} ימים.", icon="💸")
                     st.session_state.shown_toasts.add(alert_id)
 
-    # 2. LP Calls (FOF Master Fund)
     for lpc in get_lp_calls():
         if not lpc.get("call_date"): continue
         try:
@@ -406,7 +404,6 @@ def check_and_show_alerts():
                     st.toast(f"🔔 מתקרב: יעד גבייה מהמשקיעים בעוד {days_left} ימים.", icon="👥")
                     st.session_state.shown_toasts.add(alert_id)
 
-    # 3. Gantt Tasks (Pipeline) - Toasts ONLY
     all_tasks = get_gantt_tasks()
     active_tasks = [t for t in all_tasks if t.get("status") != "done"]
     for t in active_tasks:
@@ -467,7 +464,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 4.5 | פברואר 2026")
+        st.caption("גרסה 4.6 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -846,7 +843,6 @@ def show_portfolio():
                 
             if st.form_submit_button("💾 שמור קרן חדשה", type="primary"):
                 try:
-                    # המרה למיליונים רק אם הוקלד מספר קטן
                     final_commit = new_commitment * 1_000_000 if new_commitment < 1000 else new_commitment
                     get_supabase().table("funds").insert({
                         "name": new_name,
@@ -880,7 +876,6 @@ def show_fund_detail(fund):
     reports = get_quarterly_reports(fund["id"])
 
     commitment = float(fund.get("commitment") or 0)
-    # תמיכה לאחור במידה וקרנות ישנות נשמרו כספרה בודדת
     display_commit = commitment * 1_000_000 if 0 < commitment < 1000 else commitment
     
     total_called = sum(c.get("amount") or 0 for c in calls if not c.get("is_future"))
@@ -940,7 +935,6 @@ def show_fund_detail(fund):
                     index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
                 new_geo = st.text_input("מיקוד גיאוגרפי", value=fund.get("geographic_focus","") or "")
             with col2:
-                # מציג במיליונים לטובת עריכה נוחה
                 input_commit_val = display_commit / 1_000_000 if display_commit >= 1000 else display_commit
                 new_commitment = st.number_input("התחייבות ($M / €M)", value=float(input_commit_val), min_value=0.0)
                 
@@ -1327,7 +1321,6 @@ def show_pipeline():
                     st.metric("דמי ניהול", f"{mgmt}%" if mgmt else "—")
                     st.metric("Carry / Hurdle", f"{carry}% / {hurdle}%" if carry and hurdle else "—")
                 
-                # ניקוי מילים לא רצויות כמו "NoneB" מהערות אוטומטיות
                 aum_str = f" | מנהל AUM: ${r.get('aum_manager')}B" if r.get("aum_manager") else ""
                 irr_str = f" | IRR: {r.get('target_irr_gross')}%" if r.get("target_irr_gross") else ""
                 moic_str = f" | MOIC: {r.get('target_return_moic_low')}x-{r.get('target_return_moic_high')}x" if r.get("target_return_moic_low") else ""
@@ -1503,6 +1496,7 @@ def show_pipeline():
 
 def show_gantt(tasks, fund):
     import plotly.graph_objects as go
+    from datetime import timedelta
 
     CAT_CONFIG = {
         "Analysis": {"icon": "🟢", "color": "#16a34a", "bg": "#052e16"},
@@ -1547,24 +1541,43 @@ def show_gantt(tasks, fund):
     </div>
     """, unsafe_allow_html=True)
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_hdr1, col_hdr2 = st.columns([3, 1])
+    with col_hdr1:
+        st.markdown("##### 📊 תצוגת גאנט")
+    with col_hdr2:
+        show_done = st.toggle("הצג משימות שהושלמו", value=True, key=f"show_done_toggle_{fid}")
+
+    visible_tasks = tasks if show_done else [t for t in tasks if t.get("status") != "done"]
+
     gantt_tasks_data = []
     today_dt = date.today()
-    for t in tasks:
+    for t in visible_tasks:
         if t.get("start_date") and t.get("due_date"):
             cat = t.get("category", "Admin")
             cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
             status = t.get("status", "todo")
+            
             if status == "done":
                 bar_color = "#22c55e" 
+                icon = "✅"
+                task_display = f"<s>{t['task_name']}</s>"
             elif status == "blocked":
                 bar_color = "#ef4444" 
+                icon = cfg['icon']
+                task_display = t['task_name']
             elif status == "in_progress":
                 bar_color = "#3b82f6" 
+                icon = cfg['icon']
+                task_display = t['task_name']
             else:
                 bar_color = "#475569" 
+                icon = cfg['icon']
+                task_display = t['task_name']
 
             gantt_tasks_data.append({
-                "Task": f"{cfg['icon']} {t['task_name']}",
+                "Task": f"{icon} {task_display}",
+                "RawName": t["task_name"],
                 "Start": t["start_date"],
                 "Finish": t["due_date"],
                 "Color": bar_color,
@@ -1578,7 +1591,7 @@ def show_gantt(tasks, fund):
 
         for i, t in enumerate(sorted_tasks):
             start_dt_val = datetime.fromisoformat(t["Start"])
-            finish_dt_val = datetime.fromisoformat(t["Finish"])
+            finish_dt_val = datetime.fromisoformat(t["Finish"]) + timedelta(days=1)
             duration_ms = (finish_dt_val - start_dt_val).total_seconds() * 1000
 
             fig.add_trace(go.Bar(
@@ -1586,12 +1599,12 @@ def show_gantt(tasks, fund):
                 y=[t["Task"]],
                 base=[t["Start"]],
                 orientation="h",
-                marker=dict(color=t["Color"], opacity=0.9, line=dict(width=1, color="#0f172a")),
+                marker=dict(color=t["Color"], opacity=0.95, line=dict(width=1, color="#0f172a")),
                 text=[f" {t['Status']}"],
                 textposition="inside",
                 insidetextanchor="middle",
-                textfont=dict(color="white", size=12),
-                hovertemplate=f"<b>{t['Task']}</b><br>{t['Start']} → {t['Finish']}<br>סטטוס: {t['Status']}<extra></extra>",
+                textfont=dict(color="white", size=13, family="Heebo"),
+                hovertemplate=f"<b>{t['RawName']}</b><br>{t['Start']} → {t['Finish']}<br>סטטוס: {t['Status']}<extra></extra>",
                 showlegend=False,
             ))
             
@@ -1604,12 +1617,12 @@ def show_gantt(tasks, fund):
         fig.add_annotation(
             x=str(today_dt), y=1, yref="paper",
             text="היום", showarrow=False,
-            font=dict(color="#f59e0b", size=13),
+            font=dict(color="#f59e0b", size=13, family="Heebo"),
             yanchor="bottom"
         )
         
         fig.update_layout(
-            height=max(400, len(sorted_tasks) * 45 + 100),
+            height=max(350, len(sorted_tasks) * 45 + 100),
             barmode="overlay",
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="#0f172a",
@@ -1619,35 +1632,32 @@ def show_gantt(tasks, fund):
             yaxis=dict(gridcolor="#1e293b", tickfont=dict(size=14), automargin=True),
         )
         st.plotly_chart(fig, use_container_width=True, key=f"gantt_chart_{fid}")
+    else:
+        st.info("אין משימות להצגה בגרף זה כרגע.")
 
     st.markdown("##### 📋 עריכת משימות")
-    col_f1, col_f2 = st.columns([3, 1])
-    with col_f2:
-        show_done = st.toggle("הצג הושלם", value=False, key=f"show_done_toggle_{fid}")
-
+    
     cats_order = ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"]
     for cat in cats_order:
-        cat_tasks = [t for t in tasks if t.get("category","") == cat]
+        cat_tasks = [t for t in visible_tasks if t.get("category","") == cat]
         if not cat_tasks:
-            continue
-        visible = cat_tasks if show_done else [t for t in cat_tasks if t.get("status") != "done"]
-        if not visible:
             continue
 
         cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
-        done_c = sum(1 for t in cat_tasks if t.get("status") == "done")
-        cat_pct = int(done_c / len(cat_tasks) * 100)
+        all_cat_tasks = [t for t in tasks if t.get("category","") == cat]
+        done_c = sum(1 for t in all_cat_tasks if t.get("status") == "done")
+        cat_pct = int(done_c / len(all_cat_tasks) * 100)
 
         st.markdown(f"""
         <div style="background:{cfg['bg']};border-left:3px solid {cfg['color']};
                     border-radius:8px;padding:10px 14px;margin:8px 0 4px 0;
                     display:flex;justify-content:space-between;align-items:center;">
             <span style="color:{cfg['color']};font-weight:600;">{cfg['icon']} {cat}</span>
-            <span style="color:#94a3b8;font-size:12px;">{done_c}/{len(cat_tasks)} · {cat_pct}%</span>
+            <span style="color:#94a3b8;font-size:12px;">{done_c}/{len(all_cat_tasks)} · {cat_pct}%</span>
         </div>
         """, unsafe_allow_html=True)
 
-        for t in visible:
+        for t in cat_tasks:
             status = t.get("status", "todo")
             scfg = STATUS_CONFIG.get(status, STATUS_CONFIG["todo"])
             
