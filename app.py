@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v4.8 - app.py
-Add Bulk Investors Upload via Excel/CSV
+OCTO FUND DASHBOARD v4.9 - app.py
+Added FOF Level Capital Calls Summary to the Overview Page
 """
 
 import streamlit as st
@@ -468,7 +468,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 4.8 | פברואר 2026")
+        st.caption("גרסה 4.9 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -574,6 +574,46 @@ def show_overview():
         if not future_calls_found:
             st.info("💡 הוסף Calls עתידיים כדי לראות תחזית כאן")
 
+    # --- הוספת סיכום משקיעים למסך הראשי ---
+    st.divider()
+    st.subheader("📊 סיכום גביה לקריאות (FOF Level)")
+
+    investors = get_investors()
+    lp_calls = get_lp_calls()
+    payments = get_lp_payments()
+    currency_sym = "$" 
+    total_fund_commitment = sum(inv.get("commitment", 0) for inv in investors)
+
+    col_sum1, col_sum2 = st.columns([1, 3])
+    with col_sum1:
+        st.metric("סה״כ התחייבויות (LPs)", format_currency(total_fund_commitment, currency_sym))
+
+    with col_sum2:
+        if lp_calls:
+            summary_data = []
+            for c in lp_calls:
+                call_pct = c["call_pct"] / 100.0
+                total_called_amount = total_fund_commitment * call_pct
+
+                paid_commit = 0
+                for inv in investors:
+                    payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
+                    if payment and payment["is_paid"]:
+                        paid_commit += inv.get("commitment", 0)
+
+                total_paid_amount = paid_commit * call_pct
+                outstanding = total_called_amount - total_paid_amount
+
+                summary_data.append({
+                    "קריאה": f"{c['call_date']} ({c['call_pct']}%)",
+                    "סה״כ נדרש": format_currency(total_called_amount, currency_sym),
+                    "סה״כ התקבל": format_currency(total_paid_amount, currency_sym),
+                    "יתרה חסרה": format_currency(outstanding, currency_sym)
+                })
+            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("אין קריאות פעילות עדיין.")
+
 def show_investors():
     st.title("👥 ניהול משקיעים וקריאות להון (Master Fund)")
     
@@ -623,7 +663,6 @@ def show_investors():
                                         if name_val.lower() == 'nan' or not name_val:
                                             continue
                                         
-                                        # נקה פסיקים, רווחים וסימני מטבע כדי לוודא שהמספר יעבור
                                         commit_str = str(row.iloc[1]).replace(',', '').replace('$', '').replace('€', '').strip()
                                         try:
                                             commit_val = float(commit_str)
