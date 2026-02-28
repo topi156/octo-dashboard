@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v5.0 - app.py
-Major Performance Update: Implemented Caching & Solved N+1 Queries
+OCTO FUND DASHBOARD v5.1 - app.py
+Added Mid-Market Buyout to Fund Strategies
 """
 
 import streamlit as st
@@ -49,7 +49,7 @@ Return ONLY a valid JSON object with these exact keys (use null only if truly no
 {{
 "fund_name": "full fund name including fund number",
 "manager": "management company name",
-"strategy": "one of: Growth, VC, Tech, Niche, Special Situations",
+"strategy": "one of: Growth, VC, Tech, Niche, Special Situations, Mid-Market Buyout",
 "fund_size_target": number in millions USD (e.g. 2500 for $2.5B),
 "fund_size_hard_cap": number in millions USD or null,
 "currency": "USD or EUR",
@@ -175,6 +175,7 @@ REPORT TEXT:
         if content.startswith("json"):
             content = content[4:]
     return json.loads(content.strip())
+
 
 st.set_page_config(
     page_title="ALT Group | Octo Dashboard",
@@ -508,7 +509,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 5.0 | פברואר 2026")
+        st.caption("גרסה 5.1 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -832,39 +833,6 @@ def show_investors():
             st.error(f"שגיאה בעדכון: {e}")
 
     st.divider()
-    st.markdown("### 📊 סיכום גביה לקריאות (FOF Level)")
-    
-    col_sum1, col_sum2 = st.columns([1, 3])
-    with col_sum1:
-        st.metric("סה״כ התחייבויות (LPs)", format_currency(total_fund_commitment, currency_sym))
-    
-    with col_sum2:
-        if lp_calls:
-            summary_data = []
-            for c in lp_calls:
-                call_pct = c["call_pct"] / 100.0
-                total_called_amount = total_fund_commitment * call_pct
-                
-                paid_commit = 0
-                for inv in investors:
-                    payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
-                    if payment and payment["is_paid"]:
-                        paid_commit += inv.get("commitment", 0)
-                
-                total_paid_amount = paid_commit * call_pct
-                outstanding = total_called_amount - total_paid_amount
-                
-                summary_data.append({
-                    "קריאה": f"{c['call_date']} ({c['call_pct']}%)",
-                    "סה״כ נדרש": format_currency(total_called_amount, currency_sym),
-                    "סה״כ התקבל": format_currency(total_paid_amount, currency_sym),
-                    "יתרה חסרה": format_currency(outstanding, currency_sym)
-                })
-            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("אין קריאות פעילות עדיין.")
-
-    st.divider()
     st.markdown("### ➕ ניהול קריאות לכסף (Capital Calls)")
     
     col_call_add, col_call_manage = st.columns([1, 1])
@@ -952,7 +920,7 @@ def show_portfolio():
             with col1:
                 new_name = st.text_input("שם הקרן")
                 new_manager = st.text_input("מנהל הקרן")
-                strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations"]
+                strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
                 new_strategy = st.selectbox("אסטרטגיה", strategy_opts)
                 new_geo = st.text_input("מיקוד גיאוגרפי")
             with col2:
@@ -1050,7 +1018,7 @@ def show_fund_detail(fund):
             with col1:
                 new_name = st.text_input("שם הקרן", value=fund.get("name",""))
                 new_manager = st.text_input("מנהל", value=fund.get("manager","") or "")
-                strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations"]
+                strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
                 cur_s = fund.get("strategy","Growth")
                 new_strategy = st.selectbox("אסטרטגיה", strategy_opts,
                     index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
@@ -1410,7 +1378,7 @@ def show_pipeline():
                 with col1:
                     fund_name = st.text_input("שם הקרן", value=r.get("fund_name") or "")
                     manager = st.text_input("מנהל", value=r.get("manager") or "")
-                    strategy_options = ["Growth", "VC", "Tech", "Niche", "Special Situations"]
+                    strategy_options = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
                     ai_strategy = r.get("strategy", "Growth")
                     strategy_idx = strategy_options.index(ai_strategy) if ai_strategy in strategy_options else 0
                     strategy = st.selectbox("אסטרטגיה", strategy_options, index=strategy_idx)
@@ -1477,7 +1445,7 @@ def show_pipeline():
             with col1:
                 name = st.text_input("שם הקרן")
                 manager = st.text_input("מנהל")
-                strategy = st.selectbox("אסטרטגיה", ["Growth", "VC", "Tech", "Niche", "Special Situations"])
+                strategy = st.selectbox("אסטרטגיה", ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"])
             with col2:
                 target_commitment_input = st.number_input("יעד השקעה ($M)", min_value=0.0)
                 currency = st.selectbox("מטבע", ["USD", "EUR"])
@@ -1549,7 +1517,7 @@ def show_pipeline():
                     with col1:
                         new_name = st.text_input("שם הקרן", value=fund.get("name",""))
                         new_manager = st.text_input("מנהל", value=fund.get("manager",""))
-                        strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations"]
+                        strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
                         cur_strat = fund.get("strategy","Growth")
                         new_strategy = st.selectbox("אסטרטגיה", strategy_opts,
                             index=strategy_opts.index(cur_strat) if cur_strat in strategy_opts else 0)
