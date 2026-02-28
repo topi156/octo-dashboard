@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v4.7 - app.py
-Fixed Missing show_reports Function (Full Version)
+OCTO FUND DASHBOARD v4.8 - app.py
+Add Bulk Investors Upload via Excel/CSV
 """
 
 import streamlit as st
@@ -468,7 +468,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 4.7 | פברואר 2026")
+        st.caption("גרסה 4.8 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -587,20 +587,59 @@ def show_investors():
     col_add_inv, col_manage_inv = st.columns(2)
     
     with col_add_inv:
-        with st.expander("➕ הוסף משקיע חדש לקרן (FOF)"):
-            with st.form("add_lp_form"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    inv_name = st.text_input("שם משקיע")
-                with c2:
-                    inv_commit = st.number_input(f"סכום התחייבות ({currency_sym})", min_value=0.0)
-                if st.form_submit_button("שמור משקיע", type="primary"):
-                    try:
-                        sb.table("investors").insert({"name": inv_name, "commitment": inv_commit}).execute()
-                        st.success("משקיע נוסף!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"שגיאה: {e}")
+        with st.expander("➕ הוסף משקיע/ים לקרן (FOF)"):
+            tab_manual, tab_bulk = st.tabs(["הוספה ידנית", "העלאת קובץ אקסל"])
+            with tab_manual:
+                with st.form("add_lp_form"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        inv_name = st.text_input("שם משקיע")
+                    with c2:
+                        inv_commit = st.number_input(f"סכום התחייבות ({currency_sym})", min_value=0.0)
+                    if st.form_submit_button("שמור משקיע", type="primary"):
+                        try:
+                            sb.table("investors").insert({"name": inv_name, "commitment": inv_commit}).execute()
+                            log_action("INSERT", "investors", f"הוסף משקיע חדש: {inv_name}", {"commitment": inv_commit})
+                            st.success("משקיע נוסף!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"שגיאה: {e}")
+            with tab_bulk:
+                st.markdown("<small>העלה קובץ עם 2 עמודות: עמודה א' = <b>שם המשקיע</b>, עמודה ב' = <b>סכום התחייבות</b></small>", unsafe_allow_html=True)
+                uploaded_inv_file = st.file_uploader("בחר קובץ (Excel / CSV)", type=["xlsx", "xls", "csv"], key="inv_uploader")
+                if uploaded_inv_file:
+                    if st.button("טען משקיעים למערכת", type="primary", use_container_width=True):
+                        with st.spinner("טוען משקיעים..."):
+                            try:
+                                if uploaded_inv_file.name.lower().endswith('.csv'):
+                                    df = pd.read_csv(uploaded_inv_file)
+                                else:
+                                    df = pd.read_excel(uploaded_inv_file)
+                                
+                                if len(df.columns) >= 2:
+                                    count = 0
+                                    for idx, row in df.iterrows():
+                                        name_val = str(row.iloc[0]).strip()
+                                        if name_val.lower() == 'nan' or not name_val:
+                                            continue
+                                        
+                                        # נקה פסיקים, רווחים וסימני מטבע כדי לוודא שהמספר יעבור
+                                        commit_str = str(row.iloc[1]).replace(',', '').replace('$', '').replace('€', '').strip()
+                                        try:
+                                            commit_val = float(commit_str)
+                                        except:
+                                            commit_val = 0.0
+                                        
+                                        sb.table("investors").insert({"name": name_val, "commitment": commit_val}).execute()
+                                        count += 1
+                                    
+                                    log_action("INSERT", "investors", f"נוספו {count} משקיעים בטעינה מקובץ אקסל", {})
+                                    st.success(f"✅ {count} משקיעים נוספו בהצלחה!")
+                                    st.rerun()
+                                else:
+                                    st.error("הקובץ חייב להכיל לפחות 2 עמודות.")
+                            except Exception as e:
+                                st.error(f"שגיאה בקריאת הקובץ: {e}")
 
     with col_manage_inv:
         with st.expander("⚙️ ניהול משקיעים קיימים (עריכה / מחיקה)"):
@@ -1739,6 +1778,7 @@ def show_gantt(tasks, fund):
                         st.error(f"שגיאה: {e}")
                 else:
                     st.error("יש להזין שם משימה")
+
 
 def show_reports():
     st.title("📈 דוחות רבעוניים")
