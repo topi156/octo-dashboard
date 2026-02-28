@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v4.9 - app.py
-Added FOF Level Capital Calls Summary to the Overview Page
+OCTO FUND DASHBOARD v5.0 - app.py
+Major Performance Update: Implemented Caching & Solved N+1 Queries
 """
 
 import streamlit as st
@@ -176,7 +176,6 @@ REPORT TEXT:
             content = content[4:]
     return json.loads(content.strip())
 
-
 st.set_page_config(
     page_title="ALT Group | Octo Dashboard",
     page_icon="📊",
@@ -270,6 +269,11 @@ def get_supabase() -> Client:
     key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YXhpcHdzdmxuc3ltZGJrb2txIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMjQzNTQsImV4cCI6MjA4NzYwMDM1NH0.6LyuFmRi6ApaWbgy_acQxEsp6r96dkG8xYJZKFpB6aQ"
     return create_client(url, key)
 
+# Helper function to clear cache and trigger rerun
+def clear_cache_and_rerun():
+    st.cache_data.clear()
+    st.rerun()
+
 # --- AUDIT LOGGING FUNCTION ---
 def log_action(action: str, table_name: str, details: str, old_data: dict = None):
     try:
@@ -285,58 +289,94 @@ def log_action(action: str, table_name: str, details: str, old_data: dict = None
     except Exception:
         pass
 
-def get_audit_logs():
-    try: return get_supabase().table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute().data or []
-    except: return []
-
-# --- DB Functions ---
-def get_funds():
+# --- FAST DB Fetching (Cached & Optimized) ---
+@st.cache_data(ttl=600)
+def fetch_all_funds():
     try: return get_supabase().table("funds").select("*").order("name").execute().data or []
     except Exception as e: st.error(f"שגיאה בטעינת קרנות: {e}"); return []
 
-def get_capital_calls(fund_id=None):
-    try:
-        query = get_supabase().table("capital_calls").select("*").order("call_number")
-        if fund_id:
-            query = query.eq("fund_id", fund_id)
-        return query.execute().data or []
+def get_funds():
+    return fetch_all_funds()
+
+@st.cache_data(ttl=600)
+def fetch_all_capital_calls():
+    try: return get_supabase().table("capital_calls").select("*").order("call_number").execute().data or []
     except: return []
 
-def get_distributions(fund_id):
-    try: return get_supabase().table("distributions").select("*").eq("fund_id", fund_id).order("dist_date").execute().data or []
+def get_capital_calls(fund_id=None):
+    data = fetch_all_capital_calls()
+    if fund_id: return [d for d in data if d["fund_id"] == fund_id]
+    return data
+
+@st.cache_data(ttl=600)
+def fetch_all_distributions():
+    try: return get_supabase().table("distributions").select("*").order("dist_date").execute().data or []
+    except: return []
+
+def get_distributions(fund_id=None):
+    data = fetch_all_distributions()
+    if fund_id: return [d for d in data if d["fund_id"] == fund_id]
+    return data
+
+@st.cache_data(ttl=600)
+def fetch_all_quarterly_reports():
+    try: return get_supabase().table("quarterly_reports").select("*").order("year,quarter").execute().data or []
     except: return []
 
 def get_quarterly_reports(fund_id=None):
-    try: 
-        query = get_supabase().table("quarterly_reports").select("*").order("year,quarter")
-        if fund_id:
-            query = query.eq("fund_id", fund_id)
-        return query.execute().data or []
-    except: return []
+    data = fetch_all_quarterly_reports()
+    if fund_id: return [d for d in data if d["fund_id"] == fund_id]
+    return data
 
-def get_pipeline_funds():
+@st.cache_data(ttl=600)
+def fetch_all_pipeline_funds():
     try: return get_supabase().table("pipeline_funds").select("*").order("target_close_date").execute().data or []
     except: return []
 
-def get_gantt_tasks(pipeline_fund_id=None):
-    try: 
-        query = get_supabase().table("gantt_tasks").select("*").order("start_date")
-        if pipeline_fund_id:
-            query = query.eq("pipeline_fund_id", pipeline_fund_id)
-        return query.execute().data or []
+def get_pipeline_funds():
+    return fetch_all_pipeline_funds()
+
+@st.cache_data(ttl=600)
+def fetch_all_gantt_tasks():
+    try: return get_supabase().table("gantt_tasks").select("*").order("start_date").execute().data or []
     except: return []
 
-def get_investors():
+def get_gantt_tasks(pipeline_fund_id=None):
+    data = fetch_all_gantt_tasks()
+    if pipeline_fund_id: return [d for d in data if d["pipeline_fund_id"] == pipeline_fund_id]
+    return data
+
+@st.cache_data(ttl=600)
+def fetch_all_investors():
     try: return get_supabase().table("investors").select("*").execute().data or []
     except: return []
 
-def get_lp_calls():
+def get_investors():
+    return fetch_all_investors()
+
+@st.cache_data(ttl=600)
+def fetch_all_lp_calls():
     try: return get_supabase().table("lp_calls").select("*").order("call_date").execute().data or []
     except: return []
 
-def get_lp_payments():
+def get_lp_calls():
+    return fetch_all_lp_calls()
+
+@st.cache_data(ttl=600)
+def fetch_all_lp_payments():
     try: return get_supabase().table("lp_payments").select("*").execute().data or []
     except: return []
+
+def get_lp_payments():
+    return fetch_all_lp_payments()
+
+@st.cache_data(ttl=600)
+def fetch_all_audit_logs():
+    try: return get_supabase().table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute().data or []
+    except: return []
+
+def get_audit_logs():
+    return fetch_all_audit_logs()
 
 # --- SMART ALERTS SYSTEM ---
 def check_and_show_alerts():
@@ -468,7 +508,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 4.9 | פברואר 2026")
+        st.caption("גרסה 5.0 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -574,7 +614,6 @@ def show_overview():
         if not future_calls_found:
             st.info("💡 הוסף Calls עתידיים כדי לראות תחזית כאן")
 
-    # --- הוספת סיכום משקיעים למסך הראשי ---
     st.divider()
     st.subheader("📊 סיכום גביה לקריאות (FOF Level)")
 
@@ -641,7 +680,7 @@ def show_investors():
                             sb.table("investors").insert({"name": inv_name, "commitment": inv_commit}).execute()
                             log_action("INSERT", "investors", f"הוסף משקיע חדש: {inv_name}", {"commitment": inv_commit})
                             st.success("משקיע נוסף!")
-                            st.rerun()
+                            clear_cache_and_rerun()
                         except Exception as e:
                             st.error(f"שגיאה: {e}")
             with tab_bulk:
@@ -674,7 +713,7 @@ def show_investors():
                                     
                                     log_action("INSERT", "investors", f"נוספו {count} משקיעים בטעינה מקובץ אקסל", {})
                                     st.success(f"✅ {count} משקיעים נוספו בהצלחה!")
-                                    st.rerun()
+                                    clear_cache_and_rerun()
                                 else:
                                     st.error("הקובץ חייב להכיל לפחות 2 עמודות.")
                             except Exception as e:
@@ -706,7 +745,7 @@ def show_investors():
                                 log_action("DELETE", "investors", f"נמחק משקיע: {inv['name']}", inv)
                                 sb.table("investors").delete().eq("id", inv["id"]).execute()
                                 st.session_state.pop(f"confirm_del_inv_{inv['id']}", None)
-                                st.rerun()
+                                clear_cache_and_rerun()
                             except Exception as e:
                                 st.error(f"שגיאה: {e}")
                     with cd2:
@@ -725,7 +764,7 @@ def show_investors():
                                     log_action("UPDATE", "investors", f"עודכן משקיע: {inv['name']} ל-{new_name}", inv)
                                     sb.table("investors").update({"name": new_name, "commitment": new_commit}).eq("id", inv["id"]).execute()
                                     st.session_state.pop(f"editing_inv_{inv['id']}", None)
-                                    st.rerun()
+                                    clear_cache_and_rerun()
                                 except Exception as e:
                                     st.error(f"שגיאה: {e}")
                         with ce2:
@@ -788,7 +827,7 @@ def show_investors():
                                 "is_paid": is_paid
                             }).execute()
             st.success("✅ הסטטוסים עודכנו בהצלחה!")
-            st.rerun()
+            clear_cache_and_rerun()
         except Exception as e:
             st.error(f"שגיאה בעדכון: {e}")
 
@@ -842,7 +881,7 @@ def show_investors():
                         "call_pct": new_call_pct
                     }).execute()
                     st.success("✅ קריאה חדשה נוספה לטבלה!")
-                    st.rerun()
+                    clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
@@ -872,7 +911,7 @@ def show_investors():
                                 log_action("DELETE", "lp_calls", f"נמחקה קריאת כסף למשקיעים: {c['call_date']}", c)
                                 sb.table("lp_calls").delete().eq("id", c["id"]).execute()
                                 st.session_state.pop(f"confirm_del_lpc_{c['id']}", None)
-                                st.rerun()
+                                clear_cache_and_rerun()
                             except Exception as e:
                                 st.error(f"שגיאה: {e}")
                     with d_c2:
@@ -895,7 +934,7 @@ def show_investors():
                                     log_action("UPDATE", "lp_calls", f"עודכנה קריאת כסף למשקיעים: {c['call_date']}", c)
                                     sb.table("lp_calls").update({"call_date": str(edit_date), "call_pct": edit_pct}).eq("id", c["id"]).execute()
                                     st.session_state.pop(f"editing_lpc_{c['id']}", None)
-                                    st.rerun()
+                                    clear_cache_and_rerun()
                                 except Exception as e:
                                     st.error(f"שגיאה: {e}")
                         with e_c2:
@@ -938,7 +977,7 @@ def show_portfolio():
                         "status": new_status
                     }).execute()
                     st.success("✅ קרן חדשה נוספה בהצלחה! היא מופיעה כעת בלשוניות למטה.")
-                    st.rerun()
+                    clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
@@ -996,7 +1035,7 @@ def show_fund_detail(fund):
                     sb.table("funds").delete().eq("id", fund["id"]).execute()
                     st.success("נמחק!")
                     st.session_state.pop(f"confirm_del_fund_{fund['id']}", None)
-                    st.rerun()
+                    clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
         with c2:
@@ -1050,7 +1089,7 @@ def show_fund_detail(fund):
                         }).eq("id", fund["id"]).execute()
                         st.success("✅ עודכן!")
                         st.session_state.pop(f"editing_fund_{fund['id']}", None)
-                        st.rerun()
+                        clear_cache_and_rerun()
                     except Exception as e:
                         st.error(f"שגיאה: {e}")
             with c2:
@@ -1087,7 +1126,7 @@ def show_fund_detail(fund):
                                 try:
                                     log_action("DELETE", "capital_calls", f"מחיקת Capital Call #{c.get('call_number')} מהקרן {fund['name']}", c)
                                     get_supabase().table("capital_calls").delete().eq("id", c["id"]).execute()
-                                    st.rerun()
+                                    clear_cache_and_rerun()
                                 except Exception as e:
                                     st.error(f"שגיאה: {e}")
                         with cc2:
@@ -1168,7 +1207,7 @@ def show_fund_detail(fund):
                     
                     st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
                     st.success("✅ נשמר!")
-                    st.rerun()
+                    clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
@@ -1191,7 +1230,7 @@ def show_fund_detail(fund):
                                 try:
                                     log_action("DELETE", "distributions", f"מחיקת חלוקה #{d.get('dist_number')} מהקרן {fund['name']}", d)
                                     get_supabase().table("distributions").delete().eq("id", d["id"]).execute()
-                                    st.rerun()
+                                    clear_cache_and_rerun()
                                 except Exception as e:
                                     st.error(f"שגיאה: {e}")
                         with dc2:
@@ -1218,7 +1257,7 @@ def show_fund_detail(fund):
                         "dist_date": str(dist_date), "amount": dist_amount, "dist_type": dist_type
                     }).execute()
                     st.success("✅ נשמר!")
-                    st.rerun()
+                    clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
@@ -1243,7 +1282,7 @@ def show_fund_detail(fund):
                                 try:
                                     log_action("DELETE", "quarterly_reports", f"מחיקת דוח Q{r['quarter']}/{r['year']} של קרן {fund['name']}", r)
                                     get_supabase().table("quarterly_reports").delete().eq("id", r["id"]).execute()
-                                    st.rerun()
+                                    clear_cache_and_rerun()
                                 except Exception as e:
                                     st.error(f"שגיאה: {e}")
                         with rc2:
@@ -1328,7 +1367,7 @@ def show_fund_detail(fund):
                     }).execute()
                     st.session_state.pop(f"rep_ai_result_{fund['id']}", None)
                     st.success("✅ דוח נשמר!")
-                    st.rerun()
+                    clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
@@ -1426,7 +1465,7 @@ def show_pipeline():
                         st.success(f"✅ קרן '{fund_name}' נוצרה!")
                         st.session_state.pdf_result = None
                         st.session_state.show_pdf_upload = False
-                        st.rerun()
+                        clear_cache_and_rerun()
                     except Exception as e:
                         st.error(f"שגיאה: {e}")
 
@@ -1461,7 +1500,7 @@ def show_pipeline():
                         pass
                     st.success(f"✅ קרן '{name}' נוצרה!")
                     st.session_state.show_add_pipeline = False
-                    st.rerun()
+                    clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"שגיאה: {e}")
 
@@ -1495,7 +1534,7 @@ def show_pipeline():
                             sb.table("pipeline_funds").delete().eq("id", fid).execute()
                             st.success("נמחק!")
                             st.session_state.pop(f"confirm_delete_{fid}", None)
-                            st.rerun()
+                            clear_cache_and_rerun()
                         except Exception as e:
                             st.error(f"שגיאה: {e}")
                 with col_no:
@@ -1548,7 +1587,7 @@ def show_pipeline():
                                 }).eq("id", fid).execute()
                                 st.success("✅ עודכן!")
                                 st.session_state.pop(f"editing_{fid}", None)
-                                st.rerun()
+                                clear_cache_and_rerun()
                             except Exception as e:
                                 st.error(f"שגיאה: {e}")
                     with col_cancel:
@@ -1771,7 +1810,7 @@ def show_gantt(tasks, fund):
                     try:
                         log_action("DELETE", "gantt_tasks", f"מחיקת משימת גאנט: {t['task_name']}", t)
                         sb.table("gantt_tasks").delete().eq("id", t["id"]).execute()
-                        st.rerun()
+                        clear_cache_and_rerun()
                     except Exception as e:
                         st.error(f"שגיאה במחיקה: {e}")
                 
@@ -1783,7 +1822,7 @@ def show_gantt(tasks, fund):
                         "start_date": str(new_start),
                         "due_date": str(new_due)
                     }).eq("id", t["id"]).execute()
-                    st.rerun()
+                    clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"שגיאה בעדכון משימה: {e}")
 
@@ -1812,7 +1851,7 @@ def show_gantt(tasks, fund):
                             "status": "todo"
                         }).execute()
                         st.success("משימה נוספה בהצלחה!")
-                        st.rerun()
+                        clear_cache_and_rerun()
                     except Exception as e:
                         st.error(f"שגיאה: {e}")
                 else:
@@ -1903,7 +1942,7 @@ def show_reports():
                 }).execute()
                 st.session_state.pop("global_rep_ai_result", None)
                 st.success("✅ דוח נשמר!")
-                st.rerun()
+                clear_cache_and_rerun()
             except Exception as e:
                 st.error(f"שגיאה: {e}")
 
