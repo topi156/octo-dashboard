@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v4.4 - app.py
-Fixed Missing Reports Function + Optimized Alerts for Performance
+OCTO FUND DASHBOARD v4.5 - app.py
+Pipeline Enhancements: Millions Formatting, Inline Task Editing, Add Tasks
 """
 
 import streamlit as st
@@ -175,6 +175,7 @@ REPORT TEXT:
         if content.startswith("json"):
             content = content[4:]
     return json.loads(content.strip())
+
 
 st.set_page_config(
     page_title="ALT Group | Octo Dashboard",
@@ -466,7 +467,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 4.4 | פברואר 2026")
+        st.caption("גרסה 4.5 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
@@ -504,7 +505,6 @@ def show_audit_logs():
                 st.json(log["old_data"])
 
 def show_overview():
-    # מפעילים את בדיקת ההתראות רק בעמוד הראשי כדי לא להכביד על המערכת במעברי עמודים
     check_and_show_alerts()
 
     st.markdown("""
@@ -838,7 +838,7 @@ def show_portfolio():
                 new_strategy = st.selectbox("אסטרטגיה", strategy_opts)
                 new_geo = st.text_input("מיקוד גיאוגרפי")
             with col2:
-                new_commitment = st.number_input("סכום התחייבות", min_value=0.0)
+                new_commitment = st.number_input("סכום התחייבות ($M / €M)", min_value=0.0)
                 new_currency = st.selectbox("מטבע", ["USD", "EUR"])
                 new_date = st.date_input("תאריך השקעה")
                 status_opts = ["active", "closed", "exited"]
@@ -846,12 +846,14 @@ def show_portfolio():
                 
             if st.form_submit_button("💾 שמור קרן חדשה", type="primary"):
                 try:
+                    # המרה למיליונים רק אם הוקלד מספר קטן
+                    final_commit = new_commitment * 1_000_000 if new_commitment < 1000 else new_commitment
                     get_supabase().table("funds").insert({
                         "name": new_name,
                         "manager": new_manager,
                         "strategy": new_strategy,
                         "geographic_focus": new_geo,
-                        "commitment": new_commitment,
+                        "commitment": final_commit,
                         "currency": new_currency,
                         "vintage_year": new_date.year,
                         "investment_date": str(new_date),
@@ -877,17 +879,20 @@ def show_fund_detail(fund):
     dists = get_distributions(fund["id"])
     reports = get_quarterly_reports(fund["id"])
 
-    commitment = fund.get("commitment") or 0
+    commitment = float(fund.get("commitment") or 0)
+    # תמיכה לאחור במידה וקרנות ישנות נשמרו כספרה בודדת
+    display_commit = commitment * 1_000_000 if 0 < commitment < 1000 else commitment
+    
     total_called = sum(c.get("amount") or 0 for c in calls if not c.get("is_future"))
     total_dist = sum(d.get("amount") or 0 for d in dists)
-    uncalled = commitment - total_called
+    uncalled = display_commit - total_called
     currency_sym = "€" if fund.get("currency") == "EUR" else "$"
 
     col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
     with col1:
-        st.metric("התחייבות", format_currency(commitment, currency_sym))
+        st.metric("התחייבות", format_currency(display_commit, currency_sym))
     with col2:
-        pct = f"{total_called/commitment*100:.1f}%" if commitment > 0 else "—"
+        pct = f"{total_called/display_commit*100:.1f}%" if display_commit > 0 else "—"
         st.metric("סה״כ נקרא", format_currency(total_called, currency_sym), pct)
     with col3:
         st.metric("יתרה לא נקראה", format_currency(uncalled, currency_sym))
@@ -935,7 +940,10 @@ def show_fund_detail(fund):
                     index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
                 new_geo = st.text_input("מיקוד גיאוגרפי", value=fund.get("geographic_focus","") or "")
             with col2:
-                new_commitment = st.number_input("התחייבות", value=float(commitment), min_value=0.0)
+                # מציג במיליונים לטובת עריכה נוחה
+                input_commit_val = display_commit / 1_000_000 if display_commit >= 1000 else display_commit
+                new_commitment = st.number_input("התחייבות ($M / €M)", value=float(input_commit_val), min_value=0.0)
+                
                 cur_cur = fund.get("currency","USD")
                 new_currency = st.selectbox("מטבע", ["USD","EUR"], index=0 if cur_cur=="USD" else 1)
                 status_opts = ["active","closed","exited"]
@@ -955,9 +963,10 @@ def show_fund_detail(fund):
                 if st.form_submit_button("💾 שמור", type="primary"):
                     try:
                         log_action("UPDATE", "funds", f"עדכון פרטי קרן השקעה: {fund['name']}", fund)
+                        final_save_commit = new_commitment * 1_000_000 if new_commitment < 1000 else new_commitment
                         get_supabase().table("funds").update({
                             "name": new_name, "manager": new_manager,
-                            "strategy": new_strategy, "commitment": new_commitment,
+                            "strategy": new_strategy, "commitment": final_save_commit,
                             "currency": new_currency, "status": new_status,
                             "vintage_year": new_inv_date.year,
                             "geographic_focus": new_geo,
@@ -1317,8 +1326,14 @@ def show_pipeline():
                     hurdle = r.get("preferred_return_pct")
                     st.metric("דמי ניהול", f"{mgmt}%" if mgmt else "—")
                     st.metric("Carry / Hurdle", f"{carry}% / {hurdle}%" if carry and hurdle else "—")
-                notes_default = f"גודל קרן: ${fund_size:,.0f}M | MOIC: {moic_low}x-{moic_high}x | IRR: {irr}% | מנהל AUM: ${r.get('aum_manager', 0)}B" if fund_size else ""
+                
+                # ניקוי מילים לא רצויות כמו "NoneB" מהערות אוטומטיות
+                aum_str = f" | מנהל AUM: ${r.get('aum_manager')}B" if r.get("aum_manager") else ""
+                irr_str = f" | IRR: {r.get('target_irr_gross')}%" if r.get("target_irr_gross") else ""
+                moic_str = f" | MOIC: {r.get('target_return_moic_low')}x-{r.get('target_return_moic_high')}x" if r.get("target_return_moic_low") else ""
+                notes_default = f"גודל קרן: ${fund_size:,.0f}M{moic_str}{irr_str}{aum_str}" if fund_size else ""
                 notes = st.text_area("הערות", value=notes_default)
+                
                 if st.form_submit_button("✅ צור קרן Pipeline + גאנט", type="primary"):
                     try:
                         sb = get_supabase()
@@ -1350,7 +1365,7 @@ def show_pipeline():
                 manager = st.text_input("מנהל")
                 strategy = st.selectbox("אסטרטגיה", ["Growth", "VC", "Tech", "Niche", "Special Situations"])
             with col2:
-                target_commitment = st.number_input("יעד השקעה", min_value=0.0)
+                target_commitment_input = st.number_input("יעד השקעה ($M)", min_value=0.0)
                 currency = st.selectbox("מטבע", ["USD", "EUR"])
                 target_close = st.date_input("תאריך סגירה")
                 priority = st.selectbox("עדיפות", ["high", "medium", "low"])
@@ -1358,9 +1373,10 @@ def show_pipeline():
             if st.form_submit_button("צור קרן + גאנט", type="primary"):
                 try:
                     sb = get_supabase()
+                    target_commitment_db = target_commitment_input * 1_000_000
                     res = sb.table("pipeline_funds").insert({
                         "name": name, "manager": manager, "strategy": strategy,
-                        "target_commitment": target_commitment, "currency": currency,
+                        "target_commitment": target_commitment_db, "currency": currency,
                         "target_close_date": str(target_close), "priority": priority, "notes": notes
                     }).execute()
                     fund_id = res.data[0]["id"]
@@ -1426,7 +1442,9 @@ def show_pipeline():
                         new_geo = st.text_input("מיקוד גיאוגרפי", value=fund.get("geographic_focus","") or "")
                     with col2:
                         cur_commit = float(fund.get("target_commitment") or 0)
-                        new_commitment = st.number_input("יעד השקעה ($M)", value=cur_commit/1_000_000 if cur_commit > 1000 else cur_commit, step=0.5)
+                        input_commit_val = cur_commit / 1_000_000 if cur_commit >= 1000 else cur_commit
+                        new_commitment_input = st.number_input("יעד השקעה ($M)", value=float(input_commit_val), step=0.5)
+                        
                         cur_currency = fund.get("currency","USD")
                         new_currency = st.selectbox("מטבע", ["USD","EUR"], index=0 if cur_currency=="USD" else 1)
                         priority_opts = ["high","medium","low"]
@@ -1446,9 +1464,10 @@ def show_pipeline():
                         if st.form_submit_button("💾 שמור שינויים", type="primary"):
                             try:
                                 log_action("UPDATE", "pipeline_funds", f"עדכון פרטי קרן פייפליין: {fund['name']}", fund)
+                                new_commitment_db = new_commitment_input * 1_000_000
                                 get_supabase().table("pipeline_funds").update({
                                     "name": new_name, "manager": new_manager,
-                                    "strategy": new_strategy, "target_commitment": new_commitment,
+                                    "strategy": new_strategy, "target_commitment": new_commitment_db,
                                     "currency": new_currency, "priority": new_priority,
                                     "target_close_date": str(new_close), "notes": new_notes
                                 }).eq("id", fid).execute()
@@ -1465,16 +1484,21 @@ def show_pipeline():
                 col1, col2, col3 = st.columns(3)
                 currency_sym = "€" if fund.get("currency") == "EUR" else "$"
                 with col1:
-                    commitment = fund.get("target_commitment") or 0
-                    st.metric("יעד השקעה", format_currency(commitment, currency_sym))
+                    commitment = float(fund.get("target_commitment") or 0)
+                    display_commit = commitment * 1_000_000 if 0 < commitment < 1000 else commitment
+                    st.metric("יעד השקעה", format_currency(display_commit, currency_sym))
                 with col2:
                     st.metric("תאריך סגירה", str(fund.get("target_close_date", "")))
                 with col3:
                     st.metric("עדיפות", fund.get("priority", "").upper())
-                if fund.get("notes"):
-                    st.caption(f"📝 {fund['notes']}")
+                
+                notes_text = fund.get("notes") or ""
+                notes_text = notes_text.replace("NoneB", "").replace("None", "").replace("x-x", "") 
+                if notes_text.strip():
+                    st.caption(f"📝 {notes_text}")
+                
                 tasks = get_gantt_tasks(fund["id"])
-                if tasks:
+                if tasks is not None:
                     show_gantt(tasks, fund)
 
 def show_gantt(tasks, fund):
@@ -1596,7 +1620,7 @@ def show_gantt(tasks, fund):
         )
         st.plotly_chart(fig, use_container_width=True, key=f"gantt_chart_{fid}")
 
-    st.markdown("##### 📋 משימות לפי קטגוריה (ניתן לערוך תאריכים וסטטוס)")
+    st.markdown("##### 📋 עריכת משימות")
     col_f1, col_f2 = st.columns([3, 1])
     with col_f2:
         show_done = st.toggle("הצג הושלם", value=False, key=f"show_done_toggle_{fid}")
@@ -1633,18 +1657,16 @@ def show_gantt(tasks, fund):
             except:
                 current_start, current_due = date.today(), date.today()
 
-            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
-            with col1:
-                st.markdown(
-                    f'<div style="padding:4px 0;color:{"#64748b" if status=="done" else "#e2e8f0"};">'
-                    f'{scfg["icon"]} {t["task_name"]}</div>',
-                    unsafe_allow_html=True
-                )
-            with col2:
+            col_icon, col_name, col_start, col_due, col_status, col_del = st.columns([0.5, 3, 2, 2, 2, 0.5])
+            with col_icon:
+                st.markdown(f"<div style='margin-top:5px; font-size:18px;'>{scfg['icon']}</div>", unsafe_allow_html=True)
+            with col_name:
+                new_name = st.text_input("שם משימה", value=t["task_name"], key=f"name_{fid}_{t['id']}", label_visibility="collapsed")
+            with col_start:
                 new_start = st.date_input("התחלה", value=current_start, key=f"start_{fid}_{t['id']}", label_visibility="collapsed")
-            with col3:
+            with col_due:
                 new_due = st.date_input("סיום", value=current_due, key=f"due_{fid}_{t['id']}", label_visibility="collapsed")
-            with col4:
+            with col_status:
                 new_status = st.selectbox(
                     "סטטוס",
                     STATUS_LIST,
@@ -1652,10 +1674,19 @@ def show_gantt(tasks, fund):
                     key=f"status_{fid}_{t['id']}",
                     label_visibility="collapsed"
                 )
+            with col_del:
+                if st.button("🗑️", key=f"del_{fid}_{t['id']}", help="מחק משימה"):
+                    try:
+                        log_action("DELETE", "gantt_tasks", f"מחיקת משימת גאנט: {t['task_name']}", t)
+                        sb.table("gantt_tasks").delete().eq("id", t["id"]).execute()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"שגיאה במחיקה: {e}")
                 
-            if new_status != status or str(new_start) != t.get("start_date") or str(new_due) != t.get("due_date"):
+            if new_status != status or str(new_start) != t.get("start_date") or str(new_due) != t.get("due_date") or new_name != t["task_name"]:
                 try:
                     sb.table("gantt_tasks").update({
+                        "task_name": new_name,
                         "status": new_status,
                         "start_date": str(new_start),
                         "due_date": str(new_due)
@@ -1664,93 +1695,36 @@ def show_gantt(tasks, fund):
                 except Exception as e:
                     st.error(f"שגיאה בעדכון משימה: {e}")
 
-def show_reports():
-    st.title("📈 דוחות רבעוניים")
-    funds = get_funds()
-    if not funds:
-        st.info("אין קרנות")
-        return
-
-    fund_options = {f["name"]: f["id"] for f in funds}
-    selected_fund_name = st.selectbox("בחר קרן", list(fund_options.keys()))
-    fund_id = fund_options[selected_fund_name]
-    reports = get_quarterly_reports(fund_id)
-
-    if reports:
-        st.subheader(f"דוחות – {selected_fund_name}")
-        rows = [{"שנה": r["year"], "רבעון": f"Q{r['quarter']}", "NAV": r.get("nav"),
-                 "TVPI": r.get("tvpi"), "DPI": r.get("dpi"), "RVPI": r.get("rvpi"),
-                 "IRR %": r.get("irr"), "הערות": r.get("notes","")} for r in reports]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    else:
-        st.info("אין דוחות רבעוניים לקרן זו עדיין.")
-
-    st.divider()
-    st.markdown("**🤖 הוסף דוח רבעוני מתוך קובץ (זיהוי אוטומטי)**")
-    uploaded_rep_file = st.file_uploader("העלה דוח רבעוני (PDF / Excel / CSV)", type=["pdf", "xlsx", "xls", "csv"], key="global_rep_uploader")
-    
-    if uploaded_rep_file:
-        if st.button("נתח מסמך עכשיו", type="primary", key="global_rep_analyze_btn"):
-            with st.spinner("Claude מנתח את הדוח..."):
-                try:
-                    file_bytes = uploaded_rep_file.read()
-                    file_name = uploaded_rep_file.name
-                    if file_name.lower().endswith('.pdf'):
-                        rep_text = extract_pdf_text(file_bytes)
-                    else:
-                        if file_name.lower().endswith('.csv'):
-                            df = pd.read_csv(io.BytesIO(file_bytes))
-                        else:
-                            df = pd.read_excel(io.BytesIO(file_bytes))
-                        rep_text = df.to_string(index=False)
-                        if len(rep_text) > 12000:
-                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
-                    
-                    ai_result = analyze_quarterly_report_with_ai(rep_text)
-                    st.session_state["global_rep_ai_result"] = ai_result
-                    st.success("✅ הנתונים חולצו בהצלחה! אנא אשר אותם בטופס למטה.")
-                except Exception as e:
-                    st.error(f"שגיאה בניתוח המסמך: {e}. (במידה ומדובר באקסל, ודא ש-openpyxl מותקן ב-requirements.txt)")
-
-    st.divider()
-    st.markdown("**➕ או הזן פרטים ידנית**")
-    
-    ai_rep = st.session_state.get("global_rep_ai_result", {})
-    
-    def_year = int(ai_rep.get("year")) if ai_rep.get("year") else 2025
-    def_quarter = int(ai_rep.get("quarter")) if ai_rep.get("quarter") in [1,2,3,4] else 1
-    
-    def_rep_date = date.today()
-    if ai_rep.get("report_date"):
-        try: def_rep_date = datetime.strptime(ai_rep["report_date"], "%Y-%m-%d").date()
-        except: pass
-
-    with st.form("add_report"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            year = st.number_input("שנה", value=def_year, min_value=2020, max_value=2030)
-            quarter = st.selectbox("רבעון", [1, 2, 3, 4], index=[1,2,3,4].index(def_quarter))
-            report_date = st.date_input("תאריך דוח", value=def_rep_date)
-        with col2:
-            nav = st.number_input("NAV", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
-            tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("tvpi") or 0.0))
-            dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("dpi") or 0.0))
-        with col3:
-            rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("rvpi") or 0.0))
-            irr = st.number_input("IRR %", step=0.1, format="%.1f", value=float(ai_rep.get("irr") or 0.0))
-            notes = st.text_area("הערות")
-        if st.form_submit_button("שמור דוח", type="primary"):
-            try:
-                get_supabase().table("quarterly_reports").upsert({
-                    "fund_id": fund_id, "year": year, "quarter": quarter,
-                    "report_date": str(report_date), "nav": nav,
-                    "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes
-                }).execute()
-                st.session_state.pop("global_rep_ai_result", None)
-                st.success("✅ דוח נשמר!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"שגיאה: {e}")
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("➕ הוספת משימה חדשה לגאנט"):
+        with st.form(f"add_new_task_{fid}"):
+            c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+            with c1:
+                new_t_name = st.text_input("שם המשימה")
+            with c2:
+                new_t_cat = st.selectbox("קטגוריה", ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"])
+            with c3:
+                new_t_start = st.date_input("תאריך התחלה", value=date.today())
+            with c4:
+                new_t_due = st.date_input("תאריך סיום", value=date.today())
+            
+            if st.form_submit_button("שמור משימה", type="primary"):
+                if new_t_name:
+                    try:
+                        sb.table("gantt_tasks").insert({
+                            "pipeline_fund_id": fid,
+                            "task_name": new_t_name,
+                            "category": new_t_cat,
+                            "start_date": str(new_t_start),
+                            "due_date": str(new_t_due),
+                            "status": "todo"
+                        }).execute()
+                        st.success("משימה נוספה בהצלחה!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"שגיאה: {e}")
+                else:
+                    st.error("יש להזין שם משימה")
 
 if __name__ == "__main__":
     main()
