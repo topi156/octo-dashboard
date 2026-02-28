@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v4.2 - app.py
-Overview Table Update + Audit Logging + AI Capital Call & Quarterly Report Extractions
+OCTO FUND DASHBOARD v4.3 - app.py
+Overview Table Update + Audit Logging + AI Extraction + Smart Alerts System
 """
 
 import streamlit as st
@@ -41,7 +41,6 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
     return full_text[:4000] + "\n\n[...]\n\n" + full_text[-8000:]
 
 def analyze_pdf_with_ai(pdf_bytes: bytes) -> dict:
-    """ AI Extraction for Fund Presentations (Pipeline) """
     pdf_text = extract_pdf_text(pdf_bytes)
     prompt = f"""You are an expert private equity analyst. Carefully analyze this fund presentation and extract ALL available information.
 Be thorough - search the entire text for financial terms, fees, returns, geography, and strategy details.
@@ -99,7 +98,6 @@ FUND PRESENTATION TEXT:
     return json.loads(content.strip())
 
 def analyze_capital_call_pdf_with_ai(pdf_bytes: bytes) -> dict:
-    """ AI Extraction for Capital Call Notices """
     pdf_text = extract_pdf_text(pdf_bytes)
     prompt = f"""You are an expert private equity fund accountant. Carefully analyze this Capital Call Notice and extract the financial details.
 
@@ -139,7 +137,6 @@ CAPITAL CALL TEXT:
     return json.loads(content.strip())
 
 def analyze_quarterly_report_with_ai(report_text: str) -> dict:
-    """ AI Extraction for Quarterly Reports / Capital Account Statements """
     prompt = f"""You are an expert private equity fund accountant. Carefully analyze this quarterly report, financial statement, or capital account statement and extract the financial performance metrics.
 
 Return ONLY a valid JSON object with these exact keys (use null if a specific metric is not found):
@@ -285,7 +282,7 @@ def log_action(action: str, table_name: str, details: str, old_data: dict = None
             "details": details,
             "old_data": old_data or {}
         }).execute()
-    except Exception as e:
+    except Exception:
         pass
 
 def get_audit_logs():
@@ -297,8 +294,12 @@ def get_funds():
     try: return get_supabase().table("funds").select("*").order("name").execute().data or []
     except Exception as e: st.error(f"שגיאה בטעינת קרנות: {e}"); return []
 
-def get_capital_calls(fund_id):
-    try: return get_supabase().table("capital_calls").select("*").eq("fund_id", fund_id).order("call_number").execute().data or []
+def get_capital_calls(fund_id=None):
+    try:
+        query = get_supabase().table("capital_calls").select("*").order("call_number")
+        if fund_id:
+            query = query.eq("fund_id", fund_id)
+        return query.execute().data or []
     except: return []
 
 def get_distributions(fund_id):
@@ -313,8 +314,12 @@ def get_pipeline_funds():
     try: return get_supabase().table("pipeline_funds").select("*").order("target_close_date").execute().data or []
     except: return []
 
-def get_gantt_tasks(pipeline_fund_id):
-    try: return get_supabase().table("gantt_tasks").select("*").eq("pipeline_fund_id", pipeline_fund_id).order("start_date").execute().data or []
+def get_gantt_tasks(pipeline_fund_id=None):
+    try: 
+        query = get_supabase().table("gantt_tasks").select("*").order("start_date")
+        if pipeline_fund_id:
+            query = query.eq("pipeline_fund_id", pipeline_fund_id)
+        return query.execute().data or []
     except: return []
 
 def get_investors():
@@ -328,6 +333,96 @@ def get_lp_calls():
 def get_lp_payments():
     try: return get_supabase().table("lp_payments").select("*").execute().data or []
     except: return []
+
+# --- SMART ALERTS SYSTEM ---
+def check_and_show_alerts():
+    if "dismissed_banners" not in st.session_state:
+        st.session_state.dismissed_banners = set()
+    if "shown_toasts" not in st.session_state:
+        st.session_state.shown_toasts = set()
+
+    today = date.today()
+    funds_dict = {f["id"]: f for f in get_funds()}
+    pipe_dict = {f["id"]: f["name"] for f in get_pipeline_funds()}
+
+    # 1. Capital Calls (Portfolio)
+    for cc in get_capital_calls():
+        if not cc.get("payment_date"): continue
+        try:
+            deadline = datetime.strptime(str(cc["payment_date"]).split("T")[0], "%Y-%m-%d").date()
+            days_left = (deadline - today).days
+        except: continue
+
+        if days_left in [0, 1, 3, 7]:
+            fund_info = funds_dict.get(cc.get("fund_id"), {})
+            fname = fund_info.get("name", "קרן לא ידועה")
+            curr = "€" if fund_info.get("currency") == "EUR" else "$"
+            amt = format_currency(cc.get("amount", 0), curr)
+            
+            if days_left in [0, 1]:
+                alert_id = f"cc_banner_{cc['id']}_{days_left}"
+                if alert_id not in st.session_state.dismissed_banners:
+                    c1, c2 = st.columns([15, 1])
+                    with c1:
+                        if days_left == 0:
+                            st.error(f"🚨 **היום!** דדליין תשלום קריאה לכסף בקרן **{fname}** ע\"ס **{amt}**.")
+                        else:
+                            st.warning(f"⚠️ **מחר!** דדליין תשלום קריאה לכסף בקרן **{fname}** ע\"ס **{amt}**.")
+                    with c2:
+                        if st.button("✖", key=f"btn_{alert_id}", help="סגור התראה"):
+                            st.session_state.dismissed_banners.add(alert_id)
+                            st.rerun()
+            else:
+                alert_id = f"cc_toast_{cc['id']}_{days_left}"
+                if alert_id not in st.session_state.shown_toasts:
+                    st.toast(f"🔔 מתקרב: קריאה לכסף בקרן {fname} בעוד {days_left} ימים.", icon="💸")
+                    st.session_state.shown_toasts.add(alert_id)
+
+    # 2. LP Calls (FOF Master Fund)
+    for lpc in get_lp_calls():
+        if not lpc.get("call_date"): continue
+        try:
+            deadline = datetime.strptime(str(lpc["call_date"]).split("T")[0], "%Y-%m-%d").date()
+            days_left = (deadline - today).days
+        except: continue
+
+        if days_left in [0, 1, 3, 7]:
+            if days_left in [0, 1]:
+                alert_id = f"lpc_banner_{lpc['id']}_{days_left}"
+                if alert_id not in st.session_state.dismissed_banners:
+                    c1, c2 = st.columns([15, 1])
+                    with c1:
+                        if days_left == 0:
+                            st.error(f"🚨 **היום!** תאריך יעד לקבלת כספים מהמשקיעים (קריאה של {lpc.get('call_pct')}%)")
+                        else:
+                            st.warning(f"⚠️ **מחר!** תאריך יעד לקבלת כספים מהמשקיעים (קריאה של {lpc.get('call_pct')}%)")
+                    with c2:
+                        if st.button("✖", key=f"btn_{alert_id}", help="סגור התראה"):
+                            st.session_state.dismissed_banners.add(alert_id)
+                            st.rerun()
+            else:
+                alert_id = f"lpc_toast_{lpc['id']}_{days_left}"
+                if alert_id not in st.session_state.shown_toasts:
+                    st.toast(f"🔔 מתקרב: יעד גבייה מהמשקיעים בעוד {days_left} ימים.", icon="👥")
+                    st.session_state.shown_toasts.add(alert_id)
+
+    # 3. Gantt Tasks (Pipeline) - Toasts ONLY
+    all_tasks = get_gantt_tasks()
+    active_tasks = [t for t in all_tasks if t.get("status") != "done"]
+    for t in active_tasks:
+        if not t.get("due_date"): continue
+        try:
+            deadline = datetime.strptime(str(t["due_date"]).split("T")[0], "%Y-%m-%d").date()
+            days_left = (deadline - today).days
+        except: continue
+
+        if days_left in [0, 1, 3, 7]:
+            alert_id = f"gantt_toast_{t['id']}_{days_left}"
+            if alert_id not in st.session_state.shown_toasts:
+                p_name = pipe_dict.get(t.get("pipeline_fund_id"), "קרן בבחינה")
+                day_str = "היום" if days_left == 0 else "מחר" if days_left == 1 else f"בעוד {days_left} ימים"
+                st.toast(f"🗓️ משימה ב-{p_name}: {t['task_name']} מסתיימת {day_str}!", icon="🎯")
+                st.session_state.shown_toasts.add(alert_id)
 
 # --- Auth ---
 USERS = {"liron": "octo2026", "alex": "octo2026", "team": "altgroup2026"}
@@ -372,11 +467,14 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 4.2 | פברואר 2026")
+        st.caption("גרסה 4.3 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
             st.rerun()
+
+    # קריאה למערכת ההתראות תמיד בראש העמוד המרכזי
+    check_and_show_alerts()
 
     if "סקירה כללית" in page: show_overview()
     elif "תיק השקעות" in page: show_portfolio()
@@ -1566,95 +1664,6 @@ def show_gantt(tasks, fund):
                     st.rerun()
                 except Exception as e:
                     st.error(f"שגיאה בעדכון משימה: {e}")
-
-
-def show_reports():
-    st.title("📈 דוחות רבעוניים")
-    funds = get_funds()
-    if not funds:
-        st.info("אין קרנות")
-        return
-
-    fund_options = {f["name"]: f["id"] for f in funds}
-    selected_fund_name = st.selectbox("בחר קרן", list(fund_options.keys()))
-    fund_id = fund_options[selected_fund_name]
-    reports = get_quarterly_reports(fund_id)
-
-    if reports:
-        st.subheader(f"דוחות – {selected_fund_name}")
-        rows = [{"שנה": r["year"], "רבעון": f"Q{r['quarter']}", "NAV": r.get("nav"),
-                 "TVPI": r.get("tvpi"), "DPI": r.get("dpi"), "RVPI": r.get("rvpi"),
-                 "IRR %": r.get("irr"), "הערות": r.get("notes","")} for r in reports]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    else:
-        st.info("אין דוחות רבעוניים לקרן זו עדיין.")
-
-    st.divider()
-    st.markdown("**🤖 הוסף דוח רבעוני מתוך קובץ (זיהוי אוטומטי)**")
-    uploaded_rep_file = st.file_uploader("העלה דוח רבעוני (PDF / Excel / CSV)", type=["pdf", "xlsx", "xls", "csv"], key="global_rep_uploader")
-    
-    if uploaded_rep_file:
-        if st.button("נתח מסמך עכשיו", type="primary", key="global_rep_analyze_btn"):
-            with st.spinner("Claude מנתח את הדוח..."):
-                try:
-                    file_bytes = uploaded_rep_file.read()
-                    file_name = uploaded_rep_file.name
-                    if file_name.lower().endswith('.pdf'):
-                        rep_text = extract_pdf_text(file_bytes)
-                    else:
-                        if file_name.lower().endswith('.csv'):
-                            df = pd.read_csv(io.BytesIO(file_bytes))
-                        else:
-                            df = pd.read_excel(io.BytesIO(file_bytes))
-                        rep_text = df.to_string(index=False)
-                        if len(rep_text) > 12000:
-                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
-                    
-                    ai_result = analyze_quarterly_report_with_ai(rep_text)
-                    st.session_state["global_rep_ai_result"] = ai_result
-                    st.success("✅ הנתונים חולצו בהצלחה! אנא אשר אותם בטופס למטה.")
-                except Exception as e:
-                    st.error(f"שגיאה בניתוח המסמך: {e}. (במידה ומדובר באקסל, ודא ש-openpyxl מותקן ב-requirements.txt)")
-
-    st.divider()
-    st.markdown("**➕ או הזן פרטים ידנית**")
-    
-    ai_rep = st.session_state.get("global_rep_ai_result", {})
-    
-    def_year = int(ai_rep.get("year")) if ai_rep.get("year") else 2025
-    def_quarter = int(ai_rep.get("quarter")) if ai_rep.get("quarter") in [1,2,3,4] else 1
-    
-    def_rep_date = date.today()
-    if ai_rep.get("report_date"):
-        try: def_rep_date = datetime.strptime(ai_rep["report_date"], "%Y-%m-%d").date()
-        except: pass
-
-    with st.form("add_report"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            year = st.number_input("שנה", value=def_year, min_value=2020, max_value=2030)
-            quarter = st.selectbox("רבעון", [1, 2, 3, 4], index=[1,2,3,4].index(def_quarter))
-            report_date = st.date_input("תאריך דוח", value=def_rep_date)
-        with col2:
-            nav = st.number_input("NAV", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
-            tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("tvpi") or 0.0))
-            dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("dpi") or 0.0))
-        with col3:
-            rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("rvpi") or 0.0))
-            irr = st.number_input("IRR %", step=0.1, format="%.1f", value=float(ai_rep.get("irr") or 0.0))
-            notes = st.text_area("הערות")
-        if st.form_submit_button("שמור דוח", type="primary"):
-            try:
-                get_supabase().table("quarterly_reports").upsert({
-                    "fund_id": fund_id, "year": year, "quarter": quarter,
-                    "report_date": str(report_date), "nav": nav,
-                    "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes
-                }).execute()
-                st.session_state.pop("global_rep_ai_result", None)
-                st.success("✅ דוח נשמר!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"שגיאה: {e}")
 
 if __name__ == "__main__":
     main()
