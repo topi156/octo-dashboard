@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v4.3 - app.py
-Overview Table Update + Audit Logging + AI Extraction + Smart Alerts System
+OCTO FUND DASHBOARD v4.4 - app.py
+Fixed Missing Reports Function + Optimized Alerts for Performance
 """
 
 import streamlit as st
@@ -175,7 +175,6 @@ REPORT TEXT:
         if content.startswith("json"):
             content = content[4:]
     return json.loads(content.strip())
-
 
 st.set_page_config(
     page_title="ALT Group | Octo Dashboard",
@@ -467,14 +466,11 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 4.3 | פברואר 2026")
+        st.caption("גרסה 4.4 | פברואר 2026")
         st.divider()
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.logged_in = False
             st.rerun()
-
-    # קריאה למערכת ההתראות תמיד בראש העמוד המרכזי
-    check_and_show_alerts()
 
     if "סקירה כללית" in page: show_overview()
     elif "תיק השקעות" in page: show_portfolio()
@@ -508,6 +504,9 @@ def show_audit_logs():
                 st.json(log["old_data"])
 
 def show_overview():
+    # מפעילים את בדיקת ההתראות רק בעמוד הראשי כדי לא להכביד על המערכת במעברי עמודים
+    check_and_show_alerts()
+
     st.markdown("""
     <div class="dashboard-header">
     <h1 style="color:white;margin:0;">📊 Octo Fund Dashboard</h1>
@@ -1179,7 +1178,7 @@ def show_fund_detail(fund):
                                   plot_bgcolor='rgba(0,0,0,0)', font_color='white')
                 st.plotly_chart(fig, use_container_width=True, key=f"perf_chart_{fund['id']}")
         else:
-            st.info("אין דוחות רבעוניים עדיין")
+            st.info("אין דוחות רבעוניים לקרן זו עדיין.")
 
         st.divider()
         st.markdown("**🤖 הוסף דוח רבעוני מתוך קובץ (זיהוי אוטומטי)**")
@@ -1664,6 +1663,94 @@ def show_gantt(tasks, fund):
                     st.rerun()
                 except Exception as e:
                     st.error(f"שגיאה בעדכון משימה: {e}")
+
+def show_reports():
+    st.title("📈 דוחות רבעוניים")
+    funds = get_funds()
+    if not funds:
+        st.info("אין קרנות")
+        return
+
+    fund_options = {f["name"]: f["id"] for f in funds}
+    selected_fund_name = st.selectbox("בחר קרן", list(fund_options.keys()))
+    fund_id = fund_options[selected_fund_name]
+    reports = get_quarterly_reports(fund_id)
+
+    if reports:
+        st.subheader(f"דוחות – {selected_fund_name}")
+        rows = [{"שנה": r["year"], "רבעון": f"Q{r['quarter']}", "NAV": r.get("nav"),
+                 "TVPI": r.get("tvpi"), "DPI": r.get("dpi"), "RVPI": r.get("rvpi"),
+                 "IRR %": r.get("irr"), "הערות": r.get("notes","")} for r in reports]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("אין דוחות רבעוניים לקרן זו עדיין.")
+
+    st.divider()
+    st.markdown("**🤖 הוסף דוח רבעוני מתוך קובץ (זיהוי אוטומטי)**")
+    uploaded_rep_file = st.file_uploader("העלה דוח רבעוני (PDF / Excel / CSV)", type=["pdf", "xlsx", "xls", "csv"], key="global_rep_uploader")
+    
+    if uploaded_rep_file:
+        if st.button("נתח מסמך עכשיו", type="primary", key="global_rep_analyze_btn"):
+            with st.spinner("Claude מנתח את הדוח..."):
+                try:
+                    file_bytes = uploaded_rep_file.read()
+                    file_name = uploaded_rep_file.name
+                    if file_name.lower().endswith('.pdf'):
+                        rep_text = extract_pdf_text(file_bytes)
+                    else:
+                        if file_name.lower().endswith('.csv'):
+                            df = pd.read_csv(io.BytesIO(file_bytes))
+                        else:
+                            df = pd.read_excel(io.BytesIO(file_bytes))
+                        rep_text = df.to_string(index=False)
+                        if len(rep_text) > 12000:
+                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
+                    
+                    ai_result = analyze_quarterly_report_with_ai(rep_text)
+                    st.session_state["global_rep_ai_result"] = ai_result
+                    st.success("✅ הנתונים חולצו בהצלחה! אנא אשר אותם בטופס למטה.")
+                except Exception as e:
+                    st.error(f"שגיאה בניתוח המסמך: {e}. (במידה ומדובר באקסל, ודא ש-openpyxl מותקן ב-requirements.txt)")
+
+    st.divider()
+    st.markdown("**➕ או הזן פרטים ידנית**")
+    
+    ai_rep = st.session_state.get("global_rep_ai_result", {})
+    
+    def_year = int(ai_rep.get("year")) if ai_rep.get("year") else 2025
+    def_quarter = int(ai_rep.get("quarter")) if ai_rep.get("quarter") in [1,2,3,4] else 1
+    
+    def_rep_date = date.today()
+    if ai_rep.get("report_date"):
+        try: def_rep_date = datetime.strptime(ai_rep["report_date"], "%Y-%m-%d").date()
+        except: pass
+
+    with st.form("add_report"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            year = st.number_input("שנה", value=def_year, min_value=2020, max_value=2030)
+            quarter = st.selectbox("רבעון", [1, 2, 3, 4], index=[1,2,3,4].index(def_quarter))
+            report_date = st.date_input("תאריך דוח", value=def_rep_date)
+        with col2:
+            nav = st.number_input("NAV", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
+            tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("tvpi") or 0.0))
+            dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("dpi") or 0.0))
+        with col3:
+            rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("rvpi") or 0.0))
+            irr = st.number_input("IRR %", step=0.1, format="%.1f", value=float(ai_rep.get("irr") or 0.0))
+            notes = st.text_area("הערות")
+        if st.form_submit_button("שמור דוח", type="primary"):
+            try:
+                get_supabase().table("quarterly_reports").upsert({
+                    "fund_id": fund_id, "year": year, "quarter": quarter,
+                    "report_date": str(report_date), "nav": nav,
+                    "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes
+                }).execute()
+                st.session_state.pop("global_rep_ai_result", None)
+                st.success("✅ דוח נשמר!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"שגיאה: {e}")
 
 if __name__ == "__main__":
     main()
