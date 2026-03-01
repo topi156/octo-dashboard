@@ -193,6 +193,12 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap');
     
     * { font-family: 'Inter', sans-serif; }
+
+    /* הקטנת כל כותרות האתר למראה נקי יותר */
+    h1 { font-size: 24px !important; margin-bottom: 0.5rem !important; }
+    h2 { font-size: 20px !important; }
+    h3 { font-size: 18px !important; }
+    
     p, label, h1, h2, h3, h4, h5, h6, a, li, input, textarea, button, [data-testid="stMetricValue"] {
         font-family: 'Inter', sans-serif !important;
     }
@@ -245,7 +251,7 @@ st.markdown("""
     [data-testid="metric-container"] label, [data-testid="metric-container"] div { color: #94a3b8 !important; }
     [data-testid="metric-container"] [data-testid="stMetricValue"] { 
         color: #ffffff !important; font-weight: 700 !important; 
-        font-size: 1.05rem !important; /* Smaller font for long full numbers */
+        font-size: 20px !important; /* <--- הפונט המוקטן של המספרים שיכנסו בתיבה בנוחות */
         word-break: break-word !important; white-space: normal !important; line-height: 1.2 !important;
     }
 
