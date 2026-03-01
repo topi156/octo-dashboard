@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v6.0 - app.py
-Security Update: Removed hardcoded secrets and credentials. Uses st.secrets.
+OCTO FUND DASHBOARD v7.0 - app.py
+Production Security: Supabase Auth, JWT Session Management, and RLS Readiness
 """
 
 import streamlit as st
@@ -264,12 +264,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_resource
+# --- SECURE CLIENT INITIALIZATION ---
+# יצירת קליינט אישי ומוגן לכל משתמש בהתבסס על ההתחברות שלו
 def get_supabase() -> Client:
-    # אבטחה: משיכת מפתחות מתוך st.secrets ולא כטקסט גלוי!
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["key"]
-    return create_client(url, key)
+    if "sb_client" not in st.session_state:
+        url = st.secrets["supabase"]["url"]
+        key = st.secrets["supabase"]["key"]
+        st.session_state.sb_client = create_client(url, key)
+    return st.session_state.sb_client
 
 # Helper function to clear cache and trigger rerun
 def clear_cache_and_rerun():
@@ -286,7 +288,6 @@ def convert_df_to_excel(df: pd.DataFrame) -> bytes:
 def generate_master_excel_bytes() -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # 1. Funds
         funds = get_funds()
         if funds:
             funds_list = []
@@ -306,7 +307,6 @@ def generate_master_excel_bytes() -> bytes:
         else:
             pd.DataFrame([{"הודעה": "אין קרנות במערכת"}]).to_excel(writer, index=False, sheet_name='תיק קרנות')
         
-        # 2. Investors & Payments
         investors = get_investors()
         lp_calls = get_lp_calls()
         payments = get_lp_payments()
@@ -326,7 +326,6 @@ def generate_master_excel_bytes() -> bytes:
         else:
             pd.DataFrame([{"הודעה": "אין משקיעים מוגדרים"}]).to_excel(writer, index=False, sheet_name='משקיעים וקריאות')
             
-        # 3. Pipeline
         pipeline = get_pipeline_funds()
         if pipeline:
             pipe_list = []
@@ -364,92 +363,92 @@ def log_action(action: str, table_name: str, details: str, old_data: dict = None
 
 # --- FAST DB Fetching (Cached & Optimized) ---
 @st.cache_data(ttl=600)
-def fetch_all_funds():
-    try: return get_supabase().table("funds").select("*").order("name").execute().data or []
+def fetch_all_funds(_sb):
+    try: return _sb.table("funds").select("*").order("name").execute().data or []
     except Exception as e: st.error(f"שגיאה בטעינת קרנות: {e}"); return []
 
 def get_funds():
-    return fetch_all_funds()
+    return fetch_all_funds(get_supabase())
 
 @st.cache_data(ttl=600)
-def fetch_all_capital_calls():
-    try: return get_supabase().table("capital_calls").select("*").order("call_number").execute().data or []
+def fetch_all_capital_calls(_sb):
+    try: return _sb.table("capital_calls").select("*").order("call_number").execute().data or []
     except: return []
 
 def get_capital_calls(fund_id=None):
-    data = fetch_all_capital_calls()
+    data = fetch_all_capital_calls(get_supabase())
     if fund_id: return [d for d in data if d["fund_id"] == fund_id]
     return data
 
 @st.cache_data(ttl=600)
-def fetch_all_distributions():
-    try: return get_supabase().table("distributions").select("*").order("dist_date").execute().data or []
+def fetch_all_distributions(_sb):
+    try: return _sb.table("distributions").select("*").order("dist_date").execute().data or []
     except: return []
 
 def get_distributions(fund_id=None):
-    data = fetch_all_distributions()
+    data = fetch_all_distributions(get_supabase())
     if fund_id: return [d for d in data if d["fund_id"] == fund_id]
     return data
 
 @st.cache_data(ttl=600)
-def fetch_all_quarterly_reports():
-    try: return get_supabase().table("quarterly_reports").select("*").order("year,quarter").execute().data or []
+def fetch_all_quarterly_reports(_sb):
+    try: return _sb.table("quarterly_reports").select("*").order("year,quarter").execute().data or []
     except: return []
 
 def get_quarterly_reports(fund_id=None):
-    data = fetch_all_quarterly_reports()
+    data = fetch_all_quarterly_reports(get_supabase())
     if fund_id: return [d for d in data if d["fund_id"] == fund_id]
     return data
 
 @st.cache_data(ttl=600)
-def fetch_all_pipeline_funds():
-    try: return get_supabase().table("pipeline_funds").select("*").order("target_close_date").execute().data or []
+def fetch_all_pipeline_funds(_sb):
+    try: return _sb.table("pipeline_funds").select("*").order("target_close_date").execute().data or []
     except: return []
 
 def get_pipeline_funds():
-    return fetch_all_pipeline_funds()
+    return fetch_all_pipeline_funds(get_supabase())
 
 @st.cache_data(ttl=600)
-def fetch_all_gantt_tasks():
-    try: return get_supabase().table("gantt_tasks").select("*").order("start_date").execute().data or []
+def fetch_all_gantt_tasks(_sb):
+    try: return _sb.table("gantt_tasks").select("*").order("start_date").execute().data or []
     except: return []
 
 def get_gantt_tasks(pipeline_fund_id=None):
-    data = fetch_all_gantt_tasks()
+    data = fetch_all_gantt_tasks(get_supabase())
     if pipeline_fund_id: return [d for d in data if d["pipeline_fund_id"] == pipeline_fund_id]
     return data
 
 @st.cache_data(ttl=600)
-def fetch_all_investors():
-    try: return get_supabase().table("investors").select("*").execute().data or []
+def fetch_all_investors(_sb):
+    try: return _sb.table("investors").select("*").execute().data or []
     except: return []
 
 def get_investors():
-    return fetch_all_investors()
+    return fetch_all_investors(get_supabase())
 
 @st.cache_data(ttl=600)
-def fetch_all_lp_calls():
-    try: return get_supabase().table("lp_calls").select("*").order("call_date").execute().data or []
+def fetch_all_lp_calls(_sb):
+    try: return _sb.table("lp_calls").select("*").order("call_date").execute().data or []
     except: return []
 
 def get_lp_calls():
-    return fetch_all_lp_calls()
+    return fetch_all_lp_calls(get_supabase())
 
 @st.cache_data(ttl=600)
-def fetch_all_lp_payments():
-    try: return get_supabase().table("lp_payments").select("*").execute().data or []
+def fetch_all_lp_payments(_sb):
+    try: return _sb.table("lp_payments").select("*").execute().data or []
     except: return []
 
 def get_lp_payments():
-    return fetch_all_lp_payments()
+    return fetch_all_lp_payments(get_supabase())
 
 @st.cache_data(ttl=600)
-def fetch_all_audit_logs():
-    try: return get_supabase().table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute().data or []
+def fetch_all_audit_logs(_sb):
+    try: return _sb.table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute().data or []
     except: return []
 
 def get_audit_logs():
-    return fetch_all_audit_logs()
+    return fetch_all_audit_logs(get_supabase())
 
 # --- SMART ALERTS SYSTEM ---
 def check_and_show_alerts():
@@ -538,31 +537,26 @@ def check_and_show_alerts():
                 st.toast(f"🗓️ משימה ב-{p_name}: {t['task_name']} מסתיימת {day_str}!", icon="🎯")
                 st.session_state.shown_toasts.add(alert_id)
 
-# --- Auth ---
-# אבטחה: משיכת משתמשים ממערכת הסודות של סטרים-ליט
-try:
-    USERS = dict(st.secrets["users"])
-except:
-    USERS = {} # יקרוס באופן אלגנטי אם עדיין לא הגדרתם בשרת
-
-def check_login(username, password):
-    return USERS.get(username.strip().lower()) == password
-
+# --- Auth: Secure Implementation ---
 def show_login():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("### 📊 Octo Fund Dashboard")
         st.markdown("**ALT Group** | Private Capital")
         st.divider()
-        username = st.text_input("שם משתמש", placeholder="liron")
-        password = st.text_input("סיסמא", type="password")
-        if st.button("כניסה", type="primary", use_container_width=True):
-            if check_login(username, password):
+        # מעכשיו מתחברים עם האימייל שהגדרתם ב-Supabase!
+        email = st.text_input("אימייל (Email)", placeholder="name@altgroup.co.il")
+        password = st.text_input("סיסמא (Password)", type="password")
+        if st.button("כניסה מאובטחת", type="primary", use_container_width=True):
+            try:
+                sb = get_supabase()
+                # הפעלת מנגנון ההתחברות הרשמי של Supabase שמחזיר JWT Token
+                res = sb.auth.sign_in_with_password({"email": email, "password": password})
                 st.session_state.logged_in = True
-                st.session_state.username = username.strip().lower()
+                st.session_state.username = email.split("@")[0] # שמירת שם לתצוגה
                 st.rerun()
-            else:
-                st.error("שם משתמש או סיסמא שגויים. (או שטרם הוגדרו סודות בשרת)")
+            except Exception as e:
+                st.error("שם משתמש או סיסמא שגויים. (ודא שאתה מזין אימייל מלא)")
 
 def require_login():
     if not st.session_state.get("logged_in"):
@@ -585,12 +579,11 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 6.0 | אבטחה מוגברת")
+        st.caption("גרסה 7.0 | אבטחת Production")
         st.divider()
         
         if st.button("🔄 רענן נתונים", use_container_width=True, help="משוך נתונים עדכניים מהשרת"):
-            st.cache_data.clear()
-            st.rerun()
+            clear_cache_and_rerun()
             
         st.divider()
         st.markdown("<small>📥 ייצוא נתונים</small>", unsafe_allow_html=True)
@@ -605,6 +598,10 @@ def main():
         st.divider()
         
         if st.button("🚪 התנתק", use_container_width=True):
+            try:
+                get_supabase().auth.sign_out()
+            except:
+                pass
             st.session_state.clear()
             st.rerun()
 
