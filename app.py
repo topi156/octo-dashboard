@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v8.0 - app.py
-Full English Translation & LTR UI
+OCTO FUND DASHBOARD v8.1 - app.py
+Full English UI, LTR Alignment, Exact Currency Formatting & UI Polish
 """
 
 import streamlit as st
@@ -17,14 +17,12 @@ OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
         return "—"
-    if amount >= 1_000_000_000:
-        return f"{currency_sym}{amount/1_000_000_000:.2f}B"
-    elif amount >= 1_000_000:
-        return f"{currency_sym}{amount/1_000_000:.1f}M"
-    elif amount >= 1_000:
-        return f"{currency_sym}{amount/1_000:.0f}K"
-    else:
-        return f"{currency_sym}{amount:,.0f}"
+    # Format with commas and 2 decimal places
+    formatted = f"{currency_sym}{amount:,.2f}"
+    # Remove trailing .00 for whole numbers
+    if formatted.endswith(".00"):
+        formatted = formatted[:-3]
+    return formatted
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     import fitz
@@ -574,7 +572,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 8.0 | English UI")
+        st.caption("Version 8.1 | Exact Values & UI Polish")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -1058,8 +1056,10 @@ def show_portfolio():
                 new_commitment = st.number_input("Commitment Amount ($M / €M)", min_value=0.0)
                 new_currency = st.selectbox("Currency", ["USD", "EUR"])
                 new_date = st.date_input("Investment Date")
-                status_opts = ["active", "closed", "exited"]
-                new_status = st.selectbox("Status", status_opts)
+                
+                status_ui_opts = ["Active", "Closed", "Exited"]
+                new_status_ui = st.selectbox("Status", status_ui_opts)
+                new_status = new_status_ui.lower()
                 
             if st.form_submit_button("💾 Save New Fund", type="primary"):
                 try:
@@ -1096,18 +1096,17 @@ def show_fund_detail(fund):
     reports = get_quarterly_reports(fund["id"])
 
     commitment = float(fund.get("commitment") or 0)
-    display_commit = commitment * 1_000_000 if 0 < commitment < 1000 else commitment
     
     total_called = sum(c.get("amount") or 0 for c in calls if not c.get("is_future"))
     total_dist = sum(d.get("amount") or 0 for d in dists)
-    uncalled = display_commit - total_called
+    uncalled = commitment - total_called
     currency_sym = "€" if fund.get("currency") == "EUR" else "$"
 
     col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
     with col1:
-        st.metric("Commitment", format_currency(display_commit, currency_sym))
+        st.metric("Commitment", format_currency(commitment, currency_sym))
     with col2:
-        pct = f"{total_called/display_commit*100:.1f}%" if display_commit > 0 else "—"
+        pct = f"{total_called/commitment*100:.1f}%" if commitment > 0 else "—"
         st.metric("Total Called", format_currency(total_called, currency_sym), pct)
     with col3:
         st.metric("Uncalled Balance", format_currency(uncalled, currency_sym))
@@ -1155,14 +1154,15 @@ def show_fund_detail(fund):
                     index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
                 new_geo = st.text_input("Geographic Focus", value=fund.get("geographic_focus","") or "")
             with col2:
-                input_commit_val = display_commit / 1_000_000 if display_commit >= 1000 else display_commit
-                new_commitment = st.number_input("Commitment ($M / €M)", value=float(input_commit_val), min_value=0.0)
+                # Convert back to M for editing input if it's very large, or let them type exact
+                new_commitment = st.number_input("Commitment (Exact Amount)", value=float(commitment), min_value=0.0)
                 
                 cur_cur = fund.get("currency","USD")
                 new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_cur=="USD" else 1)
-                status_opts = ["active","closed","exited"]
-                cur_st = fund.get("status","active")
-                new_status = st.selectbox("Status", status_opts,
+                
+                status_opts = ["Active", "Closed", "Exited"]
+                cur_st = fund.get("status","active").capitalize()
+                new_status_ui = st.selectbox("Status", status_opts,
                     index=status_opts.index(cur_st) if cur_st in status_opts else 0)
                 
                 cur_date = fund.get("investment_date")
@@ -1177,11 +1177,10 @@ def show_fund_detail(fund):
                 if st.form_submit_button("💾 Save", type="primary"):
                     try:
                         log_action("UPDATE", "funds", f"Updated fund details: {fund['name']}", fund)
-                        final_save_commit = new_commitment * 1_000_000 if new_commitment < 1000 else new_commitment
                         get_supabase().table("funds").update({
                             "name": new_name, "manager": new_manager,
-                            "strategy": new_strategy, "commitment": final_save_commit,
-                            "currency": new_currency, "status": new_status,
+                            "strategy": new_strategy, "commitment": new_commitment,
+                            "currency": new_currency, "status": new_status_ui.lower(),
                             "vintage_year": new_inv_date.year,
                             "geographic_focus": new_geo,
                             "investment_date": str(new_inv_date)
@@ -1317,7 +1316,7 @@ def show_fund_detail(fund):
                 with st.expander(f"Dist #{d.get('dist_number')} | {d.get('dist_date','')} | {format_currency(d.get('amount',0), currency_sym)}", expanded=False):
                     col1, col2 = st.columns([4,1])
                     with col1:
-                        st.write(f"Type: {d.get('dist_type','')} | Amount: {format_currency(d.get('amount',0), currency_sym)}")
+                        st.write(f"Type: {d.get('dist_type','').capitalize()} | Amount: {format_currency(d.get('amount',0), currency_sym)}")
                     with col2:
                         if st.button("🗑️", key=f"del_dist_{d['id']}", help="Delete Distribution"):
                             st.session_state[f"confirm_del_dist_{d['id']}"] = True
@@ -1348,12 +1347,15 @@ def show_fund_detail(fund):
                 dist_date = st.date_input("Date")
             with col2:
                 dist_amount = st.number_input("Amount", min_value=0.0)
-                dist_type = st.selectbox("Type", ["income", "capital", "recycle"])
+                
+                type_opts = ["Income", "Capital", "Recycle"]
+                dist_type_ui = st.selectbox("Type", type_opts)
+                
             if st.form_submit_button("Save", type="primary"):
                 try:
                     get_supabase().table("distributions").insert({
                         "fund_id": fund["id"], "dist_number": dist_num,
-                        "dist_date": str(dist_date), "amount": dist_amount, "dist_type": dist_type
+                        "dist_date": str(dist_date), "amount": dist_amount, "dist_type": dist_type_ui.lower()
                     }).execute()
                     st.success("✅ Saved!")
                     clear_cache_and_rerun()
@@ -1520,7 +1522,10 @@ def show_pipeline():
                     target_commitment = st.number_input("Our Target Commitment ($M)", min_value=0.0, value=0.0, step=0.5)
                     currency = st.selectbox("Currency", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
                     target_close = st.date_input("Target Close Date")
-                    priority = st.selectbox("Priority", ["high", "medium", "low"])
+                    
+                    priority_opts = ["High", "Medium", "Low"]
+                    priority_ui = st.selectbox("Priority", priority_opts, index=1)
+                    
                 st.divider()
                 st.markdown("**📊 Fund Metrics (For Documentation)**")
                 col3, col4, col5 = st.columns(3)
@@ -1554,7 +1559,7 @@ def show_pipeline():
                             "name": fund_name, "manager": manager, "strategy": strategy,
                             "target_commitment": target_commitment * 1_000_000,
                             "currency": currency, "target_close_date": str(target_close),
-                            "priority": priority, "notes": notes
+                            "priority": priority_ui.lower(), "notes": notes
                         }).execute()
                         fund_id = res.data[0]["id"]
                         try:
@@ -1581,7 +1586,10 @@ def show_pipeline():
                 target_commitment_input = st.number_input("Target Commitment ($M)", min_value=0.0)
                 currency = st.selectbox("Currency", ["USD", "EUR"])
                 target_close = st.date_input("Closing Date")
-                priority = st.selectbox("Priority", ["high", "medium", "low"])
+                
+                priority_opts = ["High", "Medium", "Low"]
+                priority_ui = st.selectbox("Priority", priority_opts, index=1)
+                
             notes = st.text_area("Notes")
             if st.form_submit_button("Create Fund + Gantt", type="primary"):
                 try:
@@ -1590,7 +1598,7 @@ def show_pipeline():
                     res = sb.table("pipeline_funds").insert({
                         "name": name, "manager": manager, "strategy": strategy,
                         "target_commitment": target_commitment_db, "currency": currency,
-                        "target_close_date": str(target_close), "priority": priority, "notes": notes
+                        "target_close_date": str(target_close), "priority": priority_ui.lower(), "notes": notes
                     }).execute()
                     fund_id = res.data[0]["id"]
                     try:
@@ -1660,9 +1668,10 @@ def show_pipeline():
                         
                         cur_currency = fund.get("currency","USD")
                         new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_currency=="USD" else 1)
-                        priority_opts = ["high","medium","low"]
-                        cur_priority = fund.get("priority","medium")
-                        new_priority = st.selectbox("Priority", priority_opts,
+                        
+                        priority_opts = ["High", "Medium", "Low"]
+                        cur_priority = fund.get("priority","medium").capitalize()
+                        new_priority_ui = st.selectbox("Priority", priority_opts,
                             index=priority_opts.index(cur_priority) if cur_priority in priority_opts else 1)
                         
                         cur_date = fund.get("target_close_date")
@@ -1681,7 +1690,7 @@ def show_pipeline():
                                 get_supabase().table("pipeline_funds").update({
                                     "name": new_name, "manager": new_manager,
                                     "strategy": new_strategy, "target_commitment": new_commitment_db,
-                                    "currency": new_currency, "priority": new_priority,
+                                    "currency": new_currency, "priority": new_priority_ui.lower(),
                                     "target_close_date": str(new_close), "notes": new_notes
                                 }).eq("id", fid).execute()
                                 st.success("✅ Updated!")
@@ -1732,7 +1741,10 @@ def show_gantt(tasks, fund):
         "done":        {"icon": "✅", "label": "Done",        "color": "#22c55e"},
         "blocked":     {"icon": "🚫", "label": "Blocked",     "color": "#ef4444"},
     }
+    
     STATUS_LIST = ["todo", "in_progress", "done", "blocked"]
+    # Provide a clean UI list mapped directly from the configs
+    UI_STATUS_LIST = [STATUS_CONFIG[s]["label"] for s in STATUS_LIST]
 
     sb = get_supabase()
     fid = fund["id"]
@@ -1878,8 +1890,9 @@ def show_gantt(tasks, fund):
         """, unsafe_allow_html=True)
 
         for t in cat_tasks:
-            status = t.get("status", "todo")
-            scfg = STATUS_CONFIG.get(status, STATUS_CONFIG["todo"])
+            current_status = t.get("status", "todo")
+            scfg = STATUS_CONFIG.get(current_status, STATUS_CONFIG["todo"])
+            current_ui_label = scfg["label"]
             
             try:
                 current_start = datetime.fromisoformat(t["start_date"]).date() if t.get("start_date") else date.today()
@@ -1897,13 +1910,17 @@ def show_gantt(tasks, fund):
             with col_due:
                 new_due = st.date_input("End", value=current_due, key=f"due_{fid}_{t['id']}", label_visibility="collapsed")
             with col_status:
-                new_status = st.selectbox(
+                new_ui_label = st.selectbox(
                     "Status",
-                    STATUS_LIST,
-                    index=STATUS_LIST.index(status) if status in STATUS_LIST else 0,
+                    UI_STATUS_LIST,
+                    index=UI_STATUS_LIST.index(current_ui_label) if current_ui_label in UI_STATUS_LIST else 0,
                     key=f"status_{fid}_{t['id']}",
                     label_visibility="collapsed"
                 )
+            
+            # Map selected UI label back to DB raw status
+            new_status_mapped = [k for k, v in STATUS_CONFIG.items() if v["label"] == new_ui_label][0]
+
             with col_del:
                 if st.button("🗑️", key=f"del_{fid}_{t['id']}", help="Delete Task"):
                     try:
@@ -1913,11 +1930,11 @@ def show_gantt(tasks, fund):
                     except Exception as e:
                         st.error(f"Delete Error: {e}")
                 
-            if new_status != status or str(new_start) != t.get("start_date") or str(new_due) != t.get("due_date") or new_name != t["task_name"]:
+            if new_status_mapped != current_status or str(new_start) != t.get("start_date") or str(new_due) != t.get("due_date") or new_name != t["task_name"]:
                 try:
                     sb.table("gantt_tasks").update({
                         "task_name": new_name,
-                        "status": new_status,
+                        "status": new_status_mapped,
                         "start_date": str(new_start),
                         "due_date": str(new_due)
                     }).eq("id", t["id"]).execute()
