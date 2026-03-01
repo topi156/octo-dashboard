@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v7.0 - app.py
-Production Security: Supabase Auth, JWT Session Management, and RLS Readiness
+OCTO FUND DASHBOARD v7.1 - app.py
+Production Security: Supabase Auth with Error Catching
 """
 
 import streamlit as st
@@ -265,7 +265,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- SECURE CLIENT INITIALIZATION ---
-# יצירת קליינט אישי ומוגן לכל משתמש בהתבסס על ההתחברות שלו
 def get_supabase() -> Client:
     if "sb_client" not in st.session_state:
         url = st.secrets["supabase"]["url"]
@@ -273,7 +272,6 @@ def get_supabase() -> Client:
         st.session_state.sb_client = create_client(url, key)
     return st.session_state.sb_client
 
-# Helper function to clear cache and trigger rerun
 def clear_cache_and_rerun():
     st.cache_data.clear()
     st.rerun()
@@ -544,19 +542,18 @@ def show_login():
         st.markdown("### 📊 Octo Fund Dashboard")
         st.markdown("**ALT Group** | Private Capital")
         st.divider()
-        # מעכשיו מתחברים עם האימייל שהגדרתם ב-Supabase!
         email = st.text_input("אימייל (Email)", placeholder="name@altgroup.co.il")
         password = st.text_input("סיסמא (Password)", type="password")
+        
         if st.button("כניסה מאובטחת", type="primary", use_container_width=True):
             try:
                 sb = get_supabase()
-                # הפעלת מנגנון ההתחברות הרשמי של Supabase שמחזיר JWT Token
                 res = sb.auth.sign_in_with_password({"email": email, "password": password})
                 st.session_state.logged_in = True
-                st.session_state.username = email.split("@")[0] # שמירת שם לתצוגה
+                st.session_state.username = email.split("@")[0]
                 st.rerun()
             except Exception as e:
-                st.error("שם משתמש או סיסמא שגויים. (ודא שאתה מזין אימייל מלא)")
+                st.error(f"שגיאת התחברות: {str(e)}")
 
 def require_login():
     if not st.session_state.get("logged_in"):
@@ -579,7 +576,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 7.0 | אבטחת Production")
+        st.caption("גרסה 7.1 | אבטחת Production")
         st.divider()
         
         if st.button("🔄 רענן נתונים", use_container_width=True, help="משוך נתונים עדכניים מהשרת"):
