@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v5.1 - app.py
-Added Mid-Market Buyout to Fund Strategies
+OCTO FUND DASHBOARD v5.2 - app.py
+Excel Export Functionality (Master Report & Point Specific)
 """
 
 import streamlit as st
@@ -275,6 +275,77 @@ def clear_cache_and_rerun():
     st.cache_data.clear()
     st.rerun()
 
+# --- EXCEL EXPORT HELPERS ---
+def convert_df_to_excel(df: pd.DataFrame) -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Data')
+    return output.getvalue()
+
+def generate_master_excel_bytes() -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # 1. Funds
+        funds = get_funds()
+        if funds:
+            funds_list = []
+            for f in funds:
+                calls = get_capital_calls(f["id"])
+                total_called = sum(c.get("amount") or 0 for c in calls)
+                funds_list.append({
+                    "שם קרן": f.get("name"),
+                    "מנהל": f.get("manager"),
+                    "אסטרטגיה": f.get("strategy"),
+                    "מטבע": f.get("currency"),
+                    "התחייבות": f.get("commitment"),
+                    "סך הכל שנקרא": total_called,
+                    "סטטוס": f.get("status")
+                })
+            pd.DataFrame(funds_list).to_excel(writer, index=False, sheet_name='תיק קרנות')
+        else:
+            pd.DataFrame([{"הודעה": "אין קרנות במערכת"}]).to_excel(writer, index=False, sheet_name='תיק קרנות')
+        
+        # 2. Investors & Payments
+        investors = get_investors()
+        lp_calls = get_lp_calls()
+        payments = get_lp_payments()
+        if investors:
+            data = []
+            for inv in investors:
+                row = {
+                    "שם משקיע": inv["name"],
+                    "התחייבות": inv.get("commitment", 0)
+                }
+                for c in lp_calls:
+                    col_name = f"{c['call_date']} ({c['call_pct']}%)"
+                    payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
+                    row[col_name] = "שולם" if (payment and payment["is_paid"]) else "לא שולם"
+                data.append(row)
+            pd.DataFrame(data).to_excel(writer, index=False, sheet_name='משקיעים וקריאות')
+        else:
+            pd.DataFrame([{"הודעה": "אין משקיעים מוגדרים"}]).to_excel(writer, index=False, sheet_name='משקיעים וקריאות')
+            
+        # 3. Pipeline
+        pipeline = get_pipeline_funds()
+        if pipeline:
+            pipe_list = []
+            for p in pipeline:
+                pipe_list.append({
+                    "שם קרן": p.get("name"),
+                    "מנהל": p.get("manager"),
+                    "אסטרטגיה": p.get("strategy"),
+                    "יעד השקעה": p.get("target_commitment"),
+                    "מטבע": p.get("currency"),
+                    "תאריך סגירה משוער": p.get("target_close_date"),
+                    "עדיפות": p.get("priority")
+                })
+            pd.DataFrame(pipe_list).to_excel(writer, index=False, sheet_name='פייפליין')
+        else:
+            pd.DataFrame([{"הודעה": "אין קרנות פייפליין"}]).to_excel(writer, index=False, sheet_name='פייפליין')
+            
+    return output.getvalue()
+
+
 # --- AUDIT LOGGING FUNCTION ---
 def log_action(action: str, table_name: str, details: str, old_data: dict = None):
     try:
@@ -509,14 +580,24 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 5.1 | פברואר 2026")
+        st.caption("גרסה 5.2 | פברואר 2026")
         st.divider()
         
-        # --- הכפתור החדש שנוסיף כאן ---
         if st.button("🔄 רענן נתונים", use_container_width=True, help="משוך נתונים עדכניים מהשרת"):
             st.cache_data.clear()
             st.rerun()
-        # -----------------------------
+            
+        st.divider()
+        st.markdown("<small>📥 ייצוא נתונים</small>", unsafe_allow_html=True)
+        master_excel = generate_master_excel_bytes()
+        st.download_button(
+            label="הורד דוח מאסטר (Excel)",
+            data=master_excel,
+            file_name=f"Octo_Master_Report_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+        st.divider()
         
         if st.button("🚪 התנתק", use_container_width=True):
             st.session_state.clear()
@@ -782,7 +863,11 @@ def show_investors():
                     st.divider()
 
     st.divider()
-    st.markdown("### 📋 טבלת העברות משקיעים (סמן V להעברה)")
+    
+    col_t_hdr, col_t_export = st.columns([4, 1])
+    with col_t_hdr:
+        st.markdown("### 📋 טבלת העברות משקיעים (סמן V להעברה)")
+    
     if not investors:
         st.info("אין משקיעים מוגדרים. הוסף משקיע למעלה.")
         return
@@ -807,6 +892,15 @@ def show_investors():
         data.append(row)
 
     df = pd.DataFrame(data)
+    
+    with col_t_export:
+        excel_data = convert_df_to_excel(df.drop(columns=["id"], errors="ignore"))
+        st.download_button(
+            label="📥 ייצא טבלה לאקסל", 
+            data=excel_data, 
+            file_name=f"LP_Payments_Status_{date.today()}.xlsx", 
+            use_container_width=True
+        )
     
     edited_df = st.data_editor(
         df,
@@ -838,6 +932,39 @@ def show_investors():
             clear_cache_and_rerun()
         except Exception as e:
             st.error(f"שגיאה בעדכון: {e}")
+
+    st.divider()
+    st.markdown("### 📊 סיכום גביה לקריאות (FOF Level)")
+    
+    col_sum1, col_sum2 = st.columns([1, 3])
+    with col_sum1:
+        st.metric("סה״כ התחייבויות (LPs)", format_currency(total_fund_commitment, currency_sym))
+    
+    with col_sum2:
+        if lp_calls:
+            summary_data = []
+            for c in lp_calls:
+                call_pct = c["call_pct"] / 100.0
+                total_called_amount = total_fund_commitment * call_pct
+                
+                paid_commit = 0
+                for inv in investors:
+                    payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
+                    if payment and payment["is_paid"]:
+                        paid_commit += inv.get("commitment", 0)
+                
+                total_paid_amount = paid_commit * call_pct
+                outstanding = total_called_amount - total_paid_amount
+                
+                summary_data.append({
+                    "קריאה": f"{c['call_date']} ({c['call_pct']}%)",
+                    "סה״כ נדרש": format_currency(total_called_amount, currency_sym),
+                    "סה״כ התקבל": format_currency(total_paid_amount, currency_sym),
+                    "יתרה חסרה": format_currency(outstanding, currency_sym)
+                })
+            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("אין קריאות פעילות עדיין.")
 
     st.divider()
     st.markdown("### ➕ ניהול קריאות לכסף (Capital Calls)")
@@ -1846,11 +1973,17 @@ def show_reports():
     reports = get_quarterly_reports(fund_id)
 
     if reports:
-        st.subheader(f"דוחות – {selected_fund_name}")
-        rows = [{"שנה": r["year"], "רבעון": f"Q{r['quarter']}", "NAV": r.get("nav"),
-                 "TVPI": r.get("tvpi"), "DPI": r.get("dpi"), "RVPI": r.get("rvpi"),
-                 "IRR %": r.get("irr"), "הערות": r.get("notes","")} for r in reports]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        col_hdr1, col_hdr2 = st.columns([4, 1])
+        with col_hdr1:
+            st.subheader(f"דוחות – {selected_fund_name}")
+        with col_hdr2:
+            df_rep = pd.DataFrame([{"שנה": r["year"], "רבעון": f"Q{r['quarter']}", "NAV": r.get("nav"),
+                                    "TVPI": r.get("tvpi"), "DPI": r.get("dpi"), "RVPI": r.get("rvpi"),
+                                    "IRR %": r.get("irr"), "הערות": r.get("notes","")} for r in reports])
+            excel_data = convert_df_to_excel(df_rep)
+            st.download_button("📥 ייצא לאקסל", data=excel_data, file_name=f"Reports_{selected_fund_name}_{date.today()}.xlsx", use_container_width=True)
+            
+        st.dataframe(df_rep, use_container_width=True, hide_index=True)
     else:
         st.info("אין דוחות רבעוניים לקרן זו עדיין.")
 
