@@ -511,8 +511,15 @@ def main():
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
         st.caption("גרסה 5.1 | פברואר 2026")
         st.divider()
+        
+        # --- הכפתור החדש שנוסיף כאן ---
+        if st.button("🔄 רענן נתונים", use_container_width=True, help="משוך נתונים עדכניים מהשרת"):
+            st.cache_data.clear()
+            st.rerun()
+        # -----------------------------
+        
         if st.button("🚪 התנתק", use_container_width=True):
-            st.session_state.logged_in = False
+            st.session_state.clear()
             st.rerun()
 
     if "סקירה כללית" in page: show_overview()
