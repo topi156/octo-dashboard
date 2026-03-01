@@ -17,9 +17,15 @@ OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
         return "—"
-    # Format with commas and 2 decimal places
+    # מזהה אם הסכום הוא במיליונים (או שהמשתמש הזין בטעות סכום חד ספרתי שהתכוון למיליונים)
+    if amount >= 1_000_000:
+        return f"{currency_sym}{amount/1_000_000:,.2f}M"
+    # למקרה שקרנות ישנות נשמרו בטעות כ-6.5 במקום 6500000
+    elif 0 < amount < 100: 
+        return f"{currency_sym}{amount:,.2f}M"
+    
+    # למספרים רגילים מתחת למיליון
     formatted = f"{currency_sym}{amount:,.2f}"
-    # Remove trailing .00 for whole numbers
     if formatted.endswith(".00"):
         formatted = formatted[:-3]
     return formatted
