@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v5.2 - app.py
-Excel Export Functionality (Master Report & Point Specific)
+OCTO FUND DASHBOARD v6.0 - app.py
+Security Update: Removed hardcoded secrets and credentials. Uses st.secrets.
 """
 
 import streamlit as st
@@ -266,8 +266,9 @@ st.markdown("""
 
 @st.cache_resource
 def get_supabase() -> Client:
-    url = "https://lyaxipwsvlnsymdbkokq.supabase.co"
-    key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YXhpcHdzdmxuc3ltZGJrb2txIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMjQzNTQsImV4cCI6MjA4NzYwMDM1NH0.6LyuFmRi6ApaWbgy_acQxEsp6r96dkG8xYJZKFpB6aQ"
+    # אבטחה: משיכת מפתחות מתוך st.secrets ולא כטקסט גלוי!
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
     return create_client(url, key)
 
 # Helper function to clear cache and trigger rerun
@@ -538,7 +539,11 @@ def check_and_show_alerts():
                 st.session_state.shown_toasts.add(alert_id)
 
 # --- Auth ---
-USERS = {"liron": "octo2026", "alex": "octo2026", "team": "altgroup2026", "tess": "octo2026"}
+# אבטחה: משיכת משתמשים ממערכת הסודות של סטרים-ליט
+try:
+    USERS = dict(st.secrets["users"])
+except:
+    USERS = {} # יקרוס באופן אלגנטי אם עדיין לא הגדרתם בשרת
 
 def check_login(username, password):
     return USERS.get(username.strip().lower()) == password
@@ -557,7 +562,7 @@ def show_login():
                 st.session_state.username = username.strip().lower()
                 st.rerun()
             else:
-                st.error("שם משתמש או סיסמא שגויים")
+                st.error("שם משתמש או סיסמא שגויים. (או שטרם הוגדרו סודות בשרת)")
 
 def require_login():
     if not st.session_state.get("logged_in"):
@@ -580,7 +585,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"משתמש: {st.session_state.get('username', '')}")
-        st.caption("גרסה 5.2 | פברואר 2026")
+        st.caption("גרסה 6.0 | אבטחה מוגברת")
         st.divider()
         
         if st.button("🔄 רענן נתונים", use_container_width=True, help="משוך נתונים עדכניים מהשרת"):
