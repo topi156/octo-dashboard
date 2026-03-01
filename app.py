@@ -1524,7 +1524,7 @@ def show_pipeline():
                     sector = st.text_input("Sector Focus", value=r.get("sector_focus") or "")
                 with col2:
                     fund_size = r.get("fund_size_target") or 0
-                    target_commitment = st.number_input("Our Target Commitment (Exact Amount)", min_value=0.0, value=0.0)
+                    target_commitment = st.number_input("Our Target Commitment ($M)", min_value=0.0, value=0.0, step=0.5, format="%.1f")
                     currency = st.selectbox("Currency", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
                     target_close = st.date_input("Target Close Date")
                     
