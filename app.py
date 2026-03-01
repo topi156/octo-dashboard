@@ -467,7 +467,7 @@ def check_and_show_alerts():
                 st.session_state.shown_toasts.add(alert_id)
 
 # --- Auth ---
-USERS = {"liron": "octo2026", "alex": "octo2026", "team": "altgroup2026"}
+USERS = {"liron": "octo2026", "alex": "octo2026", "team": "altgroup2026", "tess": "octo2026"}
 
 def check_login(username, password):
     return USERS.get(username.strip().lower()) == password
