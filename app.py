@@ -1588,7 +1588,7 @@ def show_pipeline():
                 manager = st.text_input("Manager")
                 strategy = st.selectbox("Strategy", ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"])
             with col2:
-                target_commitment_input = st.number_input("Target Commitment (Exact Amount)", min_value=0.0)
+                target_commitment_input = st.number_input("Target Commitment ($M)", min_value=0.0, value=0.0, step=0.5, format="%.1f")
                 currency = st.selectbox("Currency", ["USD", "EUR"])
                 target_close = st.date_input("Closing Date")
                 
