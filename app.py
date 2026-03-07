@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.0 - app.py
-Full Restoration + NAV Portfolio Summaries + UI Optimizations
+OCTO FUND DASHBOARD v9.1 - app.py
+Master Version: Full UI, NAV Engine, AI Report Upgrades, Editing & Gantt
 """
 
 import streamlit as st
@@ -9,6 +9,8 @@ import pandas as pd
 import json
 import requests
 import io
+import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
 from supabase import create_client, Client
 
@@ -17,14 +19,11 @@ OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
         return "—"
-    # מזהה אם הסכום הוא במיליונים (או שהמשתמש הזין בטעות סכום חד ספרתי שהתכוון למיליונים)
     if amount >= 1_000_000:
         return f"{currency_sym}{amount/1_000_000:,.2f}M"
-    # למקרה שקרנות ישנות נשמרו בטעות כ-6.5 במקום 6500000
     elif 0 < amount < 100: 
         return f"{currency_sym}{amount:,.2f}M"
     
-    # למספרים רגילים מתחת למיליון
     formatted = f"{currency_sym}{amount:,.2f}"
     if formatted.endswith(".00"):
         formatted = formatted[:-3]
@@ -142,20 +141,21 @@ CAPITAL CALL TEXT:
 
 def analyze_quarterly_report_with_ai(report_text: str) -> dict:
     prompt = f"""You are an expert private equity fund accountant. Carefully analyze this quarterly report, financial statement, or capital account statement and extract the financial performance metrics.
+Pay special attention to terms like "Total Fund Value", "Gross MOIC", and "Realised/Unrealised Value" in the "Summary Report" or "Fund Performance" sections.
 
 Return ONLY a valid JSON object with these exact keys (use null if a specific metric is not found):
 {{
     "year": number (e.g., 2025, derived from the report date or As Of date),
     "quarter": number (1, 2, 3, or 4, derived from the report date, e.g., Sept 30 is Q3),
     "report_date": "YYYY-MM-DD" (The "As of" date or period end date),
-    "nav": number (Net Asset Value, Ending Capital Balance, or Total Partners' Capital, without commas. e.g., 2323320330),
-    "tvpi": number (Total Value to Paid-In multiple, e.g., 1.52, or null),
-    "dpi": number (Distributions to Paid-In multiple, e.g., 0.45, or null),
-    "rvpi": number (Residual Value to Paid-In multiple, e.g., 1.07, or null),
-    "irr": number (Internal Rate of Return as a percentage, e.g., 15.5, or null)
+    "nav": number (Total Fund Value, Net Asset Value, or Net Assets Attributable to Partners. Return the FULL absolute number without commas. e.g., if the report says €1,498.3m, return 1498300000),
+    "tvpi": number (Total Value to Paid-In multiple, Gross MOIC, Gross Multiple, e.g., 1.70, or null),
+    "dpi": number (Distributions to Paid-In multiple, Realised Multiple, or calculate it by dividing 'Realised' by 'Capital Invested', e.g., 0.34, or null),
+    "rvpi": number (Residual Value to Paid-In multiple, Unrealised Multiple, e.g., 1.40, or null),
+    "irr": number (Internal Rate of Return as a percentage, Gross IRR or Net IRR, e.g., 88.0, or null)
 }}
 
-IMPORTANT: Return ONLY the JSON, no markdown, no extra text. Ensure amounts are numbers without commas. If a value like IRR is 15.5%, return 15.5.
+IMPORTANT: Return ONLY the JSON, no markdown, no extra text. Ensure amounts are absolute numbers without commas. If a value like IRR is 88%, return 88.0.
 
 REPORT TEXT:
 {report_text}"""
@@ -251,7 +251,7 @@ st.markdown("""
     [data-testid="metric-container"] label, [data-testid="metric-container"] div { color: #94a3b8 !important; }
     [data-testid="metric-container"] [data-testid="stMetricValue"] { 
         color: #ffffff !important; font-weight: 700 !important; 
-        font-size: 20px !important; /* <--- הפונט המוקטן של המספרים שיכנסו בתיבה בנוחות */
+        font-size: 20px !important; /* הפונט המוקטן של המספרים שיכנסו בתיבה בנוחות */
         word-break: break-word !important; white-space: normal !important; line-height: 1.2 !important;
     }
 
@@ -585,7 +585,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.0 | Full UI & NAV Engine")
+        st.caption("Version 9.1 | Master Full Release")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -660,7 +660,7 @@ def show_overview():
 
     # שליפת הדוחות העדכניים ביותר לחישוב השערוך של התיק
     latest_reports = {}
-    for r in get_quarterly_reports():
+    for r in get_quarterly_reports(None):
         fid = r["fund_id"]
         if fid not in latest_reports:
             latest_reports[fid] = r
@@ -772,6 +772,47 @@ def show_overview():
             st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
         else:
             st.info("No active capital calls yet.")
+
+    # === תוספת: טבלת שערוכים בדשבורד הראשי ===
+    st.divider()
+    st.markdown("### 📊 Portfolio Valuations Summary")
+    all_reports = get_quarterly_reports(None)
+    if all_reports:
+        latest_reports = {}
+        for r in all_reports:
+            fid = r["fund_id"]
+            if fid not in latest_reports:
+                latest_reports[fid] = r
+            else:
+                curr = latest_reports[fid]
+                if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                    latest_reports[fid] = r
+        
+        summary_data = []
+        for f in funds:
+            if f["id"] in latest_reports:
+                rep = latest_reports[f["id"]]
+                sym = "€" if f.get("currency") == "EUR" else "$"
+                nav = rep.get("nav") or 0
+                
+                tvpi_str = f"{float(rep['tvpi']):.2f}x" if rep.get("tvpi") is not None else "—"
+                dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
+                irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
+                
+                summary_data.append({
+                    "Fund Name": f["name"],
+                    "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
+                    "NAV": format_currency(nav, sym),
+                    "TVPI": tvpi_str,
+                    "DPI": dpi_str,
+                    "IRR": irr_str
+                })
+        if summary_data:
+            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No valuation data available yet.")
+    else:
+        st.info("No reports have been uploaded yet.")
 
 def show_investors():
     st.title("👥 Manage Investors & FOF Calls")
@@ -1395,22 +1436,27 @@ def show_fund_detail(fund):
             st.markdown("**Quarterly Reports**")
             for r in reports:
                 with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
-                    col1, col2 = st.columns([4,1])
+                    col1, col_edit, col_del = st.columns([3, 1, 1])
                     with col1:
                         st.write(f"NAV: {format_currency(r.get('nav',0), currency_sym)} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
                         if r.get('notes'):
                             st.write(f"Notes: {r.get('notes')}")
-                    with col2:
-                        if st.button("🗑️", key=f"del_rep_{r['id']}", help="Delete Report"):
+                    with col_edit:
+                        if st.button("✏️ Edit", key=f"edit_rep_btn_{r['id']}"):
+                            st.session_state[f"editing_rep_{r['id']}"] = True
+                    with col_del:
+                        if st.button("🗑️ Delete", key=f"del_rep_btn_{r['id']}"):
                             st.session_state[f"confirm_del_rep_{r['id']}"] = True
+                            
                     if st.session_state.get(f"confirm_del_rep_{r['id']}"):
                         st.warning("Delete this report?")
                         rc1, rc2 = st.columns(2)
                         with rc1:
-                            if st.button("✅ Delete", key=f"yes_rep_{r['id']}"):
+                            if st.button("✅ Yes, Delete", key=f"yes_rep_{r['id']}"):
                                 try:
                                     log_action("DELETE", "quarterly_reports", f"Deleted report Q{r['quarter']}/{r['year']} of {fund['name']}", r)
                                     get_supabase().table("quarterly_reports").delete().eq("id", r["id"]).execute()
+                                    st.session_state.pop(f"confirm_del_rep_{r['id']}", None)
                                     clear_cache_and_rerun()
                                 except Exception as e:
                                     st.error(f"Error: {e}")
@@ -1418,6 +1464,47 @@ def show_fund_detail(fund):
                             if st.button("❌ Cancel", key=f"no_rep_{r['id']}"):
                                 st.session_state.pop(f"confirm_del_rep_{r['id']}", None)
                                 st.rerun()
+
+                    if st.session_state.get(f"editing_rep_{r['id']}"):
+                        with st.form(f"edit_rep_form_{r['id']}"):
+                            st.markdown("**✏️ Edit Report Details**")
+                            e_c1, e_c2, e_c3 = st.columns(3)
+                            with e_c1:
+                                edit_year = st.number_input("Year", value=int(r['year']), min_value=2020, max_value=2030)
+                                edit_quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(int(r['quarter'])))
+                                try:
+                                    def_rep_date = datetime.fromisoformat(str(r['report_date'])).date() if r.get('report_date') else date.today()
+                                except:
+                                    def_rep_date = date.today()
+                                edit_rep_date = st.date_input("Report Date", value=def_rep_date)
+                            with e_c2:
+                                edit_nav = st.number_input("NAV", value=float(r.get('nav') or 0.0), min_value=0.0)
+                                edit_tvpi = st.number_input("TVPI", value=float(r.get('tvpi') or 0.0), step=0.01, format="%.2f")
+                                edit_dpi = st.number_input("DPI", value=float(r.get('dpi') or 0.0), step=0.01, format="%.2f")
+                            with e_c3:
+                                edit_rvpi = st.number_input("RVPI", value=float(r.get('rvpi') or 0.0), step=0.01, format="%.2f")
+                                edit_irr = st.number_input("IRR %", value=float(r.get('irr') or 0.0), step=0.1, format="%.1f")
+                                edit_notes = st.text_area("Notes", value=r.get('notes') or "")
+                            
+                            save_c1, save_c2 = st.columns(2)
+                            with save_c1:
+                                if st.form_submit_button("💾 Save Changes", type="primary"):
+                                    try:
+                                        log_action("UPDATE", "quarterly_reports", f"Updated report Q{r['quarter']}/{r['year']}", r)
+                                        get_supabase().table("quarterly_reports").update({
+                                            "year": edit_year, "quarter": edit_quarter,
+                                            "report_date": str(edit_rep_date), "nav": edit_nav,
+                                            "tvpi": edit_tvpi, "dpi": edit_dpi, "rvpi": edit_rvpi, 
+                                            "irr": edit_irr, "notes": edit_notes
+                                        }).eq("id", r["id"]).execute()
+                                        st.session_state.pop(f"editing_rep_{r['id']}", None)
+                                        clear_cache_and_rerun()
+                                    except Exception as e:
+                                        st.error(f"Error: {e}")
+                            with save_c2:
+                                if st.form_submit_button("❌ Close"):
+                                    st.session_state.pop(f"editing_rep_{r['id']}", None)
+                                    st.rerun()
 
             import plotly.graph_objects as go
             if len(reports) > 1:
@@ -1547,7 +1634,7 @@ def show_pipeline():
                     sector = st.text_input("Sector Focus", value=r.get("sector_focus") or "")
                 with col2:
                     fund_size = r.get("fund_size_target") or 0
-                    target_commitment = st.number_input("Our Target Commitment ($M)", min_value=0.0, value=0.0, step=0.5, format="%.1f")
+                    target_commitment = st.number_input("Our Target Commitment ($M)", min_value=0.0, value=0.0, step=500000.0, format="%.1f")
                     currency = st.selectbox("Currency", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
                     target_close = st.date_input("Target Close Date")
                     
@@ -1611,7 +1698,7 @@ def show_pipeline():
                 manager = st.text_input("Manager")
                 strategy = st.selectbox("Strategy", ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"])
             with col2:
-                target_commitment_input = st.number_input("Target Commitment ($M)", min_value=0.0, value=0.0, step=0.5, format="%.1f")
+                target_commitment_input = st.number_input("Target Commitment ($M)", min_value=0.0, value=0.0, step=500000.0, format="%.1f")
                 currency = st.selectbox("Currency", ["USD", "EUR"])
                 target_close = st.date_input("Closing Date")
                 
@@ -1690,7 +1777,7 @@ def show_pipeline():
                         new_geo = st.text_input("Geographic Focus", value=fund.get("geographic_focus","") or "")
                     with col2:
                         cur_commit = float(fund.get("target_commitment") or 0)
-                        new_commitment_input = st.number_input("Target Commitment ($M)", value=cur_commit, step=0.5, format="%.1f")
+                        new_commitment_input = st.number_input("Target Commitment ($M)", value=cur_commit, step=500000.0, format="%.1f")
                         
                         cur_currency = fund.get("currency","USD")
                         new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_currency=="USD" else 1)
@@ -2005,7 +2092,7 @@ def show_reports():
 
     # --- הוספת טבלת סיכום שערוכים ---
     st.subheader("📊 Portfolio Valuations Summary")
-    all_reports = get_quarterly_reports()
+    all_reports = get_quarterly_reports(None)
     if all_reports:
         # איתור הדוח האחרון ביותר של כל קרן
         latest_reports = {}
@@ -2064,6 +2151,77 @@ def show_reports():
             st.download_button("📥 Export to Excel", data=excel_data, file_name=f"Reports_{selected_fund_name}_{date.today()}.xlsx", use_container_width=True)
             
         st.dataframe(df_rep, use_container_width=True, hide_index=True)
+
+        st.markdown("#### ⚙️ Manage Reports (Edit / Delete)")
+        for r in reports:
+            with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
+                col1, col_edit, col_del = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"NAV: {format_currency(r.get('nav',0), '$')} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
+                with col_edit:
+                    if st.button("✏️ Edit", key=f"edit_rep_global_{r['id']}"):
+                        st.session_state[f"editing_rep_g_{r['id']}"] = True
+                with col_del:
+                    if st.button("🗑️ Delete", key=f"del_rep_global_{r['id']}"):
+                        st.session_state[f"confirm_del_rep_g_{r['id']}"] = True
+                        
+                if st.session_state.get(f"confirm_del_rep_g_{r['id']}"):
+                    st.warning("Delete this report?")
+                    rc1, rc2 = st.columns(2)
+                    with rc1:
+                        if st.button("✅ Yes, Delete", key=f"yes_rep_g_{r['id']}"):
+                            try:
+                                log_action("DELETE", "quarterly_reports", f"Deleted report Q{r['quarter']}/{r['year']} of {selected_fund_name}", r)
+                                get_supabase().table("quarterly_reports").delete().eq("id", r["id"]).execute()
+                                st.session_state.pop(f"confirm_del_rep_g_{r['id']}", None)
+                                clear_cache_and_rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    with rc2:
+                        if st.button("❌ Cancel", key=f"no_rep_g_{r['id']}"):
+                            st.session_state.pop(f"confirm_del_rep_g_{r['id']}", None)
+                            st.rerun()
+
+                if st.session_state.get(f"editing_rep_g_{r['id']}"):
+                    with st.form(f"edit_rep_g_form_{r['id']}"):
+                        st.markdown("**✏️ Edit Report Details**")
+                        e_c1, e_c2, e_c3 = st.columns(3)
+                        with e_c1:
+                            edit_year = st.number_input("Year", value=int(r['year']), min_value=2020, max_value=2030)
+                            edit_quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(int(r['quarter'])))
+                            try:
+                                def_rep_date = datetime.fromisoformat(str(r['report_date'])).date() if r.get('report_date') else date.today()
+                            except:
+                                def_rep_date = date.today()
+                            edit_rep_date = st.date_input("Report Date", value=def_rep_date)
+                        with e_c2:
+                            edit_nav = st.number_input("NAV", value=float(r.get('nav') or 0.0), min_value=0.0)
+                            edit_tvpi = st.number_input("TVPI", value=float(r.get('tvpi') or 0.0), step=0.01, format="%.2f")
+                            edit_dpi = st.number_input("DPI", value=float(r.get('dpi') or 0.0), step=0.01, format="%.2f")
+                        with e_c3:
+                            edit_rvpi = st.number_input("RVPI", value=float(r.get('rvpi') or 0.0), step=0.01, format="%.2f")
+                            edit_irr = st.number_input("IRR %", value=float(r.get('irr') or 0.0), step=0.1, format="%.1f")
+                            edit_notes = st.text_area("Notes", value=r.get('notes') or "")
+                        
+                        save_c1, save_c2 = st.columns(2)
+                        with save_c1:
+                            if st.form_submit_button("💾 Save Changes", type="primary"):
+                                try:
+                                    log_action("UPDATE", "quarterly_reports", f"Updated report Q{r['quarter']}/{r['year']} of {selected_fund_name}", r)
+                                    get_supabase().table("quarterly_reports").update({
+                                        "year": edit_year, "quarter": edit_quarter,
+                                        "report_date": str(edit_rep_date), "nav": edit_nav,
+                                        "tvpi": edit_tvpi, "dpi": edit_dpi, "rvpi": edit_rvpi, 
+                                        "irr": edit_irr, "notes": edit_notes
+                                    }).eq("id", r["id"]).execute()
+                                    st.session_state.pop(f"editing_rep_g_{r['id']}", None)
+                                    clear_cache_and_rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+                        with save_c2:
+                            if st.form_submit_button("❌ Close"):
+                                st.session_state.pop(f"editing_rep_g_{r['id']}", None)
+                                st.rerun()
     else:
         st.info("No quarterly reports for this fund yet.")
 
