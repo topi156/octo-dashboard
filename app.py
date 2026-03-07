@@ -141,22 +141,21 @@ CAPITAL CALL TEXT:
 
 def analyze_quarterly_report_with_ai(report_text: str) -> dict:
     prompt = f"""You are an expert private equity fund accountant. Carefully analyze this quarterly report, financial statement, or capital account statement and extract the financial performance metrics.
-Pay special attention to terms like "Total Fund Value", "Gross MOIC", and "Realised/Unrealised Value" in the "Summary Report" or "Fund Performance" sections.
+Pay special attention to terms like "Total Fund Value", "Gross MOIC", and tables showing "Realised", "Unrealised", "Capital invested", and "IRR".
 
 Return ONLY a valid JSON object with these exact keys (use null if a specific metric is not found):
 {{
-    "year": number (e.g., 2025, derived from the report date or As Of date),
-    "quarter": number (1, 2, 3, or 4, derived from the report date, e.g., Sept 30 is Q3),
-    "report_date": "YYYY-MM-DD" (The "As of" date or period end date),
-    "nav": number (Total Fund Value, Net Asset Value, or Net Assets Attributable to Partners. Return the FULL absolute number without commas. e.g., if the report says €1,498.3m, return 1498300000),
-    "tvpi": number (Total Value to Paid-In multiple, Gross MOIC, Gross Multiple, e.g., 1.70, or null),
-    "dpi": number (Distributions to Paid-In multiple, Realised Multiple, or calculate it by dividing 'Realised' by 'Capital Invested', e.g., 0.34, or null),
-    "rvpi": number (Residual Value to Paid-In multiple, Unrealised Multiple, e.g., 1.40, or null),
-    "irr": number (Internal Rate of Return as a percentage, Gross IRR or Net IRR, e.g., 88.0, or null)
+    "year": number (e.g., 2025, derived from the report date),
+    "quarter": number (1, 2, 3, or 4),
+    "report_date": "YYYY-MM-DD",
+    "nav": number (The Fund's Total Net Asset Value, e.g. 1498300000 without commas),
+    "tvpi": number (Total Value to Paid-In, Gross MOIC, Gross Multiple, e.g., 1.70),
+    "dpi": number (Distributions to Paid-In. If not explicitly stated, calculate it by dividing 'Realised' by 'Capital Invested'. e.g., 291.8 / 856.3 = 0.34),
+    "rvpi": number (Residual Value to Paid-In, Unrealised / Capital Invested),
+    "irr": number (Internal Rate of Return percentage. Look for Gross IRR in tables, e.g., 88% -> 88.0)
 }}
 
-IMPORTANT: Return ONLY the JSON, no markdown, no extra text. Ensure amounts are absolute numbers without commas. If a value like IRR is 88%, return 88.0.
-
+IMPORTANT: Return ONLY the JSON, no markdown. Ensure amounts are absolute numbers without commas.
 REPORT TEXT:
 {report_text}"""
 
