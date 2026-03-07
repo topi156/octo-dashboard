@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.1 - app.py
-Master Version: Full UI, NAV Engine, AI Report Upgrades, Editing & Gantt
+OCTO FUND DASHBOARD v9.2 - app.py
+Master Version: Octo True NAV (USD Eqv), AI Enhancements for Triton, Full UI
 """
 
 import streamlit as st
@@ -15,6 +15,7 @@ from datetime import datetime, date, timedelta
 from supabase import create_client, Client
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
+EUR_TO_USD = 1.08 # שער המרה קבוע לתצוגת סיכום בדולרים
 
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
@@ -148,7 +149,7 @@ Return ONLY a valid JSON object with these exact keys (use null if a specific me
     "year": number (e.g., 2025, derived from the report date),
     "quarter": number (1, 2, 3, or 4),
     "report_date": "YYYY-MM-DD",
-    "nav": number (The Fund's Total Net Asset Value, e.g. 1498300000 without commas),
+    "nav": number (The Fund's Total Net Asset Value or Total Fund Value, e.g. 1498300000 without commas),
     "tvpi": number (Total Value to Paid-In, Gross MOIC, Gross Multiple, e.g., 1.70),
     "dpi": number (Distributions to Paid-In. If not explicitly stated, calculate it by dividing 'Realised' by 'Capital Invested'. e.g., 291.8 / 856.3 = 0.34),
     "rvpi": number (Residual Value to Paid-In, Unrealised / Capital Invested),
@@ -584,7 +585,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.1 | Master Full Release")
+        st.caption("Version 9.2 | Octo True NAV (USD Eqv)")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -653,42 +654,51 @@ def show_overview():
 
     funds = get_funds()
     pipeline = get_pipeline_funds()
+    calls = get_capital_calls()
+    all_reports = get_quarterly_reports(None)
 
-    total_commitment_usd = sum(f.get("commitment") or 0 for f in funds if f.get("currency") == "USD")
-    total_commitment_eur = sum(f.get("commitment") or 0 for f in funds if f.get("currency") == "EUR")
-
-    # שליפת הדוחות העדכניים ביותר לחישוב השערוך של התיק
+    # מציאת הדוח האחרון לכל קרן לצורך שערוך ה-NAV
     latest_reports = {}
-    for r in get_quarterly_reports(None):
-        fid = r["fund_id"]
-        if fid not in latest_reports:
-            latest_reports[fid] = r
-        else:
-            curr = latest_reports[fid]
-            if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+    if all_reports:
+        for r in all_reports:
+            fid = r["fund_id"]
+            if fid not in latest_reports:
                 latest_reports[fid] = r
-                
-    total_nav_usd = 0
-    total_nav_eur = 0
-    for f in funds:
-        if f["id"] in latest_reports:
-            nav = latest_reports[f["id"]].get("nav") or 0
-            if f.get("currency") == "EUR":
-                total_nav_eur += nav
             else:
-                total_nav_usd += nav
+                curr = latest_reports[fid]
+                if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                    latest_reports[fid] = r
 
-    # עיצוב מחדש של המדדים בשתי שורות נקיות
-    col1, col2, col3 = st.columns(3)
+    # חישוב התחייבויות וקריאות ושערוכים - הכל בדולרים (USD Equivalent)
+    total_commit_usd = 0
+    total_called_usd = 0
+    total_nav_usd = 0
+
+    for f in funds:
+        rate = EUR_TO_USD if f.get("currency") == "EUR" else 1.0
+        
+        commit = float(f.get("commitment") or 0)
+        total_commit_usd += commit * rate
+        
+        f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
+        called = sum(float(c.get("amount") or 0) for c in f_calls)
+        total_called_usd += called * rate
+        
+        tvpi = 1.0
+        if f["id"] in latest_reports and latest_reports[f["id"]].get("tvpi"):
+            tvpi = float(latest_reports[f["id"]]["tvpi"])
+            
+        total_nav_usd += (called * tvpi) * rate
+
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Active Funds", len(funds))
-        st.metric("Pipeline Funds", len(pipeline))
     with col2:
-        st.metric("USD Commitments", format_currency(total_commitment_usd, "$"))
-        st.metric("EUR Commitments", format_currency(total_commitment_eur, "€"))
+        st.metric("Total Commitments (USD Eqv)", format_currency(total_commit_usd, "$"))
     with col3:
-        st.metric("Portfolio NAV (USD)", format_currency(total_nav_usd, "$"))
-        st.metric("Portfolio NAV (EUR)", format_currency(total_nav_eur, "€"))
+        st.metric("Total Called (USD Eqv)", format_currency(total_called_usd, "$"))
+    with col4:
+        st.metric("Octo True NAV (USD Eqv)", format_currency(total_nav_usd, "$"))
 
     st.divider()
     col1, col2 = st.columns([2, 1])
@@ -698,8 +708,8 @@ def show_overview():
         if funds:
             rows = []
             for f in funds:
-                calls = get_capital_calls(f["id"])
-                total_called = sum(c.get("amount") or 0 for c in calls)
+                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
+                total_called = sum(c.get("amount") or 0 for c in f_calls)
                 commitment = f.get("commitment") or 0
                 pct = f"{total_called/commitment*100:.1f}%" if commitment > 0 else "—"
                 currency_sym = "€" if f.get("currency") == "EUR" else "$"
@@ -719,8 +729,7 @@ def show_overview():
         st.subheader("🔔 Upcoming Events")
         future_calls_found = False
         for f in funds:
-            calls = get_capital_calls(f["id"])
-            future = [c for c in calls if c.get("is_future")]
+            future = [c for c in calls if c["fund_id"] == f["id"] and c.get("is_future")]
             for c in future:
                 future_calls_found = True
                 st.markdown(f"""
@@ -772,36 +781,31 @@ def show_overview():
         else:
             st.info("No active capital calls yet.")
 
-    # === תוספת: טבלת שערוכים בדשבורד הראשי ===
     st.divider()
     st.markdown("### 📊 Portfolio Valuations Summary")
-    all_reports = get_quarterly_reports(None)
     if all_reports:
-        latest_reports = {}
-        for r in all_reports:
-            fid = r["fund_id"]
-            if fid not in latest_reports:
-                latest_reports[fid] = r
-            else:
-                curr = latest_reports[fid]
-                if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
-                    latest_reports[fid] = r
-        
         summary_data = []
         for f in funds:
             if f["id"] in latest_reports:
                 rep = latest_reports[f["id"]]
                 sym = "€" if f.get("currency") == "EUR" else "$"
-                nav = rep.get("nav") or 0
                 
-                tvpi_str = f"{float(rep['tvpi']):.2f}x" if rep.get("tvpi") is not None else "—"
+                fund_nav = rep.get("nav") or 0
+                
+                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
+                octo_called = sum(c.get("amount") or 0 for c in f_calls)
+                tvpi = float(rep.get('tvpi') or 1.0)
+                octo_nav = octo_called * tvpi
+                
+                tvpi_str = f"{tvpi:.2f}x" if rep.get("tvpi") is not None else "—"
                 dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
                 irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
                 
                 summary_data.append({
                     "Fund Name": f["name"],
                     "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
-                    "NAV": format_currency(nav, sym),
+                    "Fund NAV": format_currency(fund_nav, sym),
+                    "Octo NAV": format_currency(octo_nav, sym),
                     "TVPI": tvpi_str,
                     "DPI": dpi_str,
                     "IRR": irr_str
@@ -1437,7 +1441,7 @@ def show_fund_detail(fund):
                 with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
                     col1, col_edit, col_del = st.columns([3, 1, 1])
                     with col1:
-                        st.write(f"NAV: {format_currency(r.get('nav',0), currency_sym)} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
+                        st.write(f"NAV (Fund): {format_currency(r.get('nav',0), currency_sym)} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
                         if r.get('notes'):
                             st.write(f"Notes: {r.get('notes')}")
                     with col_edit:
@@ -1477,7 +1481,7 @@ def show_fund_detail(fund):
                                     def_rep_date = date.today()
                                 edit_rep_date = st.date_input("Report Date", value=def_rep_date)
                             with e_c2:
-                                edit_nav = st.number_input("NAV", value=float(r.get('nav') or 0.0), min_value=0.0)
+                                edit_nav = st.number_input("NAV (Fund Level)", value=float(r.get('nav') or 0.0), min_value=0.0)
                                 edit_tvpi = st.number_input("TVPI", value=float(r.get('tvpi') or 0.0), step=0.01, format="%.2f")
                                 edit_dpi = st.number_input("DPI", value=float(r.get('dpi') or 0.0), step=0.01, format="%.2f")
                             with e_c3:
@@ -1513,8 +1517,7 @@ def show_fund_detail(fund):
                     fig.add_trace(go.Scatter(x=labels, y=[r.get("tvpi") for r in reports], name="TVPI", line=dict(color="#4ade80")))
                 if any(r.get("dpi") for r in reports):
                     fig.add_trace(go.Scatter(x=labels, y=[r.get("dpi") for r in reports], name="DPI", line=dict(color="#60a5fa")))
-                fig.update_layout(title="Performance Over Time", paper_bgcolor='rgba(0,0,0,0)',
-                                  plot_bgcolor='rgba(0,0,0,0)', font_color='white')
+                fig.update_layout(title="Performance Over Time", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
                 st.plotly_chart(fig, use_container_width=True, key=f"perf_chart_{fund['id']}")
         else:
             st.info("No quarterly reports for this fund yet.")
@@ -1545,7 +1548,7 @@ def show_fund_detail(fund):
                         st.success("✅ Data extracted successfully! Please review and confirm in the form below.")
                     except Exception as e:
                         st.error(f"Error analyzing document: {e}. (If Excel, ensure openpyxl is in requirements.txt)")
-
+        
         st.divider()
         st.markdown("**➕ Or Enter Details Manually**")
         
@@ -1566,13 +1569,14 @@ def show_fund_detail(fund):
                 quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(def_quarter))
                 report_date = st.date_input("Report Date", value=def_rep_date)
             with col2:
-                nav = st.number_input("NAV", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
+                nav = st.number_input("NAV (Fund Level)", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
                 tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("tvpi") or 0.0))
                 dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("dpi") or 0.0))
             with col3:
                 rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("rvpi") or 0.0))
                 irr = st.number_input("IRR %", step=0.1, format="%.1f", value=float(ai_rep.get("irr") or 0.0))
                 notes = st.text_area("Notes")
+                
             if st.form_submit_button("Save Report", type="primary"):
                 try:
                     get_supabase().table("quarterly_reports").upsert({
@@ -1580,8 +1584,9 @@ def show_fund_detail(fund):
                         "report_date": str(report_date), "nav": nav,
                         "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes
                     }).execute()
+                    
                     st.session_state.pop(f"rep_ai_result_{fund['id']}", None)
-                    st.success("✅ Report saved!")
+                    st.success("✅ Saved!")
                     clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -2085,15 +2090,14 @@ def show_gantt(tasks, fund):
 def show_reports():
     st.title("📈 Quarterly Reports")
     funds = get_funds()
+    calls = get_capital_calls()
     if not funds:
         st.info("No funds in the system")
         return
 
-    # --- הוספת טבלת סיכום שערוכים ---
     st.subheader("📊 Portfolio Valuations Summary")
     all_reports = get_quarterly_reports(None)
     if all_reports:
-        # איתור הדוח האחרון ביותר של כל קרן
         latest_reports = {}
         for r in all_reports:
             fid = r["fund_id"]
@@ -2109,16 +2113,22 @@ def show_reports():
             if f["id"] in latest_reports:
                 rep = latest_reports[f["id"]]
                 sym = "€" if f.get("currency") == "EUR" else "$"
-                nav = rep.get("nav") or 0
                 
-                tvpi_str = f"{float(rep['tvpi']):.2f}x" if rep.get("tvpi") is not None else "—"
+                fund_nav = rep.get("nav") or 0
+                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
+                octo_called = sum(c.get("amount") or 0 for c in f_calls)
+                tvpi = float(rep.get('tvpi') or 1.0)
+                octo_value = octo_called * tvpi
+                
+                tvpi_str = f"{tvpi:.2f}x" if rep.get("tvpi") is not None else "—"
                 dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
                 irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
                 
                 summary_data.append({
                     "Fund Name": f["name"],
                     "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
-                    "NAV": format_currency(nav, sym),
+                    "Fund NAV": format_currency(fund_nav, sym),
+                    "Octo NAV": format_currency(octo_value, sym),
                     "TVPI": tvpi_str,
                     "DPI": dpi_str,
                     "IRR": irr_str
@@ -2156,7 +2166,7 @@ def show_reports():
             with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
                 col1, col_edit, col_del = st.columns([3, 1, 1])
                 with col1:
-                    st.write(f"NAV: {format_currency(r.get('nav',0), '$')} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
+                    st.write(f"NAV (Fund): {format_currency(r.get('nav',0), '$')} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
                 with col_edit:
                     if st.button("✏️ Edit", key=f"edit_rep_global_{r['id']}"):
                         st.session_state[f"editing_rep_g_{r['id']}"] = True
@@ -2206,7 +2216,6 @@ def show_reports():
                         with save_c1:
                             if st.form_submit_button("💾 Save Changes", type="primary"):
                                 try:
-                                    log_action("UPDATE", "quarterly_reports", f"Updated report Q{r['quarter']}/{r['year']} of {selected_fund_name}", r)
                                     get_supabase().table("quarterly_reports").update({
                                         "year": edit_year, "quarter": edit_quarter,
                                         "report_date": str(edit_rep_date), "nav": edit_nav,
@@ -2271,7 +2280,7 @@ def show_reports():
             quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(def_quarter))
             report_date = st.date_input("Report Date", value=def_rep_date)
         with col2:
-            nav = st.number_input("NAV", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
+            nav = st.number_input("NAV (Fund Level)", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
             tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("tvpi") or 0.0))
             dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("dpi") or 0.0))
         with col3:
