@@ -284,6 +284,22 @@ def get_supabase() -> Client:
         st.session_state.sb_client = create_client(url, key)
     return st.session_state.sb_client
 
+def get_saved_fx_rate():
+    try:
+        res = get_supabase().table("settings").select("value").eq("key", "eur_usd_rate").execute()
+        if res.data:
+            return float(res.data[0]["value"])
+    except:
+        pass
+    return 1.0800  # ברירת מחדל אם משהו משתבש או שהטבלה ריקה
+
+def update_saved_fx_rate(new_rate):
+    try:
+        # פקודת upsert מעדכנת את השורה אם היא קיימת, או יוצרת אותה אם לא
+        get_supabase().table("settings").upsert({"key": "eur_usd_rate", "value": new_rate}).execute()
+    except Exception as e:
+        st.error(f"Failed to save FX rate: {e}")
+
 def clear_cache_and_rerun():
     st.cache_data.clear()
     st.rerun()
