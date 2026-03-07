@@ -605,10 +605,25 @@ def main():
         
         st.divider()
         st.markdown("### 💱 FX Rate")
-        # שמירת שער ההמרה במצב של הפעלה כדי שיחול על כל האתר
+        
+        # 1. שליפת השער ממסד הנתונים (רק אם עדיין לא נשלף בהפעלה הנוכחית)
         if "eur_usd_rate" not in st.session_state:
-            st.session_state.eur_usd_rate = 1.0800
-        st.number_input("EUR to USD Rate", key="eur_usd_rate", min_value=0.0001, step=0.0001, format="%.4f")
+            st.session_state.eur_usd_rate = get_saved_fx_rate()
+
+        # 2. הצגת השדה למשתמש
+        new_rate = st.number_input(
+            "EUR to USD Rate", 
+            value=st.session_state.eur_usd_rate, 
+            min_value=0.0001, 
+            step=0.0001, 
+            format="%.4f"
+        )
+
+        # 3. אם המשתמש שינה את המספר בשדה - שומרים גם בזיכרון וגם ל-Supabase
+        if new_rate != st.session_state.eur_usd_rate:
+            st.session_state.eur_usd_rate = new_rate
+            update_saved_fx_rate(new_rate)
+            st.rerun()
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
