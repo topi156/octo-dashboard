@@ -577,9 +577,12 @@ def main():
         
         st.divider()
         st.markdown("### 💱 FX Rate")
-        # שמירת שער ההמרה במצב של הפעלה כדי שיחול על כל האתר
-        eur_usd_rate = st.number_input("EUR to USD Rate", value=1.0800, step=0.0001, format="%.4f")
-        st.session_state.eur_usd_rate = eur_usd_rate
+        # בדיקה האם קיים שער בזיכרון, ואם לא - נגדיר ברירת מחדל
+        if "eur_usd_rate" not in st.session_state:
+            st.session_state.eur_usd_rate = 1.0800
+            
+        # שימוש ב-key מחבר את השדה ישירות לזיכרון ושומר את הערך בעת מעבר עמודים
+        st.number_input("EUR to USD Rate", key="eur_usd_rate", step=0.0001, format="%.4f")
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
