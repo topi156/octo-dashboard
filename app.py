@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.2 - app.py
-Master Version: Octo True NAV (USD Eqv), AI Enhancements for Triton, Full UI
+OCTO FUND DASHBOARD v9.3 - app.py
+Master Version: Dynamic FX Rate, Octo True Invested Base, M-formatting, Triton AI Fix
 """
 
 import streamlit as st
@@ -15,19 +15,19 @@ from datetime import datetime, date, timedelta
 from supabase import create_client, Client
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
-EUR_TO_USD = 1.08 # שער המרה קבוע לתצוגת סיכום בדולרים
 
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
         return "—"
-    if amount >= 1_000_000:
-        return f"{currency_sym}{amount/1_000_000:,.2f}M"
-    elif 0 < amount < 100: 
+    
+    # אם המשתמש הזין מספר קטן (כמו 6.5) בפייפליין, נתייחס לזה כמיליונים
+    if 0 < amount <= 1000: 
         return f"{currency_sym}{amount:,.2f}M"
     
-    formatted = f"{currency_sym}{amount:,.2f}"
-    if formatted.endswith(".00"):
-        formatted = formatted[:-3]
+    if amount >= 1_000_000:
+        return f"{currency_sym}{amount/1_000_000:,.2f}M"
+    
+    formatted = f"{currency_sym}{amount:,.0f}"
     return formatted
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
@@ -142,21 +142,21 @@ CAPITAL CALL TEXT:
 
 def analyze_quarterly_report_with_ai(report_text: str) -> dict:
     prompt = f"""You are an expert private equity fund accountant. Carefully analyze this quarterly report, financial statement, or capital account statement and extract the financial performance metrics.
-Pay special attention to terms like "Total Fund Value", "Gross MOIC", and tables showing "Realised", "Unrealised", "Capital invested", and "IRR".
+Pay special attention to tables like "Fund Performance: Investments" or "Gross returns" which have columns such as "Capital invested", "Realised", "Unrealised", "Total", "Multiple", "IRR".
 
 Return ONLY a valid JSON object with these exact keys (use null if a specific metric is not found):
 {{
     "year": number (e.g., 2025, derived from the report date),
     "quarter": number (1, 2, 3, or 4),
     "report_date": "YYYY-MM-DD",
-    "nav": number (The Fund's Total Net Asset Value or Total Fund Value, e.g. 1498300000 without commas),
-    "tvpi": number (Total Value to Paid-In, Gross MOIC, Gross Multiple, e.g., 1.70),
-    "dpi": number (Distributions to Paid-In. If not explicitly stated, calculate it by dividing 'Realised' by 'Capital Invested'. e.g., 291.8 / 856.3 = 0.34),
-    "rvpi": number (Residual Value to Paid-In, Unrealised / Capital Invested),
-    "irr": number (Internal Rate of Return percentage. Look for Gross IRR in tables, e.g., 88% -> 88.0)
+    "nav": number (The Fund's Total Value or Net Asset Value. Ensure it is the FULL absolute number, e.g., if it says 1,498.3m, return 1498300000 without commas),
+    "tvpi": number (Total Value to Paid-In, Gross MOIC, or Multiple, e.g., 1.70),
+    "dpi": number (Distributions to Paid-In. IF NOT EXPLICITLY STATED, calculate it by dividing 'Realised' by 'Capital invested'. e.g., 291.8 / 856.3 = 0.34),
+    "rvpi": number (Residual Value to Paid-In. IF NOT EXPLICITLY STATED, calculate it by dividing 'Unrealised' by 'Capital invested'. e.g., 1206.5 / 856.3 = 1.40),
+    "irr": number (Internal Rate of Return percentage, usually found under Gross IRR. e.g., 88% -> 88.0)
 }}
 
-IMPORTANT: Return ONLY the JSON, no markdown. Ensure amounts are absolute numbers without commas.
+IMPORTANT: Return ONLY the JSON, no markdown, no extra text. Ensure amounts are absolute numbers without commas.
 REPORT TEXT:
 {report_text}"""
 
@@ -194,7 +194,7 @@ st.markdown("""
     
     * { font-family: 'Inter', sans-serif; }
 
-    /* הקטנת כל כותרות האתר למראה נקי יותר */
+    /* כותרות ראשיות */
     h1 { font-size: 24px !important; margin-bottom: 0.5rem !important; }
     h2 { font-size: 20px !important; }
     h3 { font-size: 18px !important; }
@@ -231,28 +231,19 @@ st.markdown("""
     [data-testid="stSelectbox"] span:not(.material-symbols-rounded) { 
         background-color: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important;
     }
-    [data-baseweb="popover"], [data-baseweb="popover"] > div, [data-baseweb="popover"] > div > div { background-color: #1e293b !important; }
-    [data-baseweb="select"] > div, [data-baseweb="menu"], [data-baseweb="menu"] > div, [data-baseweb="menu"] ul {
-        background-color: #1e293b !important; border: 1px solid #334155 !important;
-    }
-    [data-baseweb="menu"] * { color: #e2e8f0 !important; }
-    ul[data-testid="stSelectboxVirtualDropdown"], [role="listbox"], [role="listbox"] > div, [role="listbox"] li { 
-        background-color: #1e293b !important; border-color: #334155 !important;
-    }
-    [role="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
-    [role="option"]:hover, [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
-    [role="option"] * { color: #e2e8f0 !important; background-color: transparent !important; }
-    li[class*="option"], div[class*="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
 
+    /* עיצוב והקטנת פונטים עבור קוביות המספרים (Metrics) כדי שלא יחתכו */
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         border: 1px solid #0f3460; border-radius: 12px; padding: 12px; overflow: hidden;
     }
-    [data-testid="metric-container"] label, [data-testid="metric-container"] div { color: #94a3b8 !important; }
+    [data-testid="metric-container"] label, [data-testid="metric-container"] div { 
+        color: #94a3b8 !important; font-size: 13px !important;
+    }
     [data-testid="metric-container"] [data-testid="stMetricValue"] { 
         color: #ffffff !important; font-weight: 700 !important; 
-        font-size: 20px !important; /* הפונט המוקטן של המספרים שיכנסו בתיבה בנוחות */
-        word-break: break-word !important; white-space: normal !important; line-height: 1.2 !important;
+        font-size: 1.1rem !important; /* <--- פונט מוקטן במיוחד למספרים גדולים */
+        word-break: break-word !important; white-space: pre-wrap !important; line-height: 1.2 !important;
     }
 
     [data-testid="stSidebar"] { background: #0f1117 !important; }
@@ -583,9 +574,16 @@ def main():
             "📈 Reports",
             "📋 Audit Logs"
         ], label_visibility="collapsed")
+        
+        st.divider()
+        st.markdown("### 💱 FX Rate")
+        # שמירת שער ההמרה במצב של הפעלה כדי שיחול על כל האתר
+        eur_usd_rate = st.number_input("EUR to USD Rate", value=1.08, step=0.01)
+        st.session_state.eur_usd_rate = eur_usd_rate
+
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.2 | Octo True NAV (USD Eqv)")
+        st.caption("Version 9.3 | True Octo NAV & FX Rates")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -655,50 +653,34 @@ def show_overview():
     funds = get_funds()
     pipeline = get_pipeline_funds()
     calls = get_capital_calls()
-    all_reports = get_quarterly_reports(None)
 
-    # מציאת הדוח האחרון לכל קרן לצורך שערוך ה-NAV
-    latest_reports = {}
-    if all_reports:
-        for r in all_reports:
-            fid = r["fund_id"]
-            if fid not in latest_reports:
-                latest_reports[fid] = r
-            else:
-                curr = latest_reports[fid]
-                if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
-                    latest_reports[fid] = r
-
-    # חישוב התחייבויות וקריאות ושערוכים - הכל בדולרים (USD Equivalent)
+    # חישוב התחייבויות וקריאות - הכל מומר לדולרים כדי להציג נתון אחד נקי של Octo
     total_commit_usd = 0
     total_called_usd = 0
-    total_nav_usd = 0
 
     for f in funds:
-        rate = EUR_TO_USD if f.get("currency") == "EUR" else 1.0
+        rate = st.session_state.eur_usd_rate if f.get("currency") == "EUR" else 1.0
         
-        commit = float(f.get("commitment") or 0)
-        total_commit_usd += commit * rate
+        # התחייבות הקרן
+        c = float(f.get("commitment") or 0)
+        if 0 < c <= 1000: # תאימות לנתונים ישנים שנשמרו כ-6.5
+            c *= 1_000_000
+        total_commit_usd += c * rate
         
-        f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-        called = sum(float(c.get("amount") or 0) for c in f_calls)
+        # סך הקריאות בפועל (סך ההשקעה האמיתית שלנו - ה-NAV Base)
+        f_calls = [x for x in calls if x["fund_id"] == f["id"] and not x.get("is_future")]
+        called = sum(float(x.get("amount") or 0) for x in f_calls)
         total_called_usd += called * rate
-        
-        tvpi = 1.0
-        if f["id"] in latest_reports and latest_reports[f["id"]].get("tvpi"):
-            tvpi = float(latest_reports[f["id"]]["tvpi"])
-            
-        total_nav_usd += (called * tvpi) * rate
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Active Funds", len(funds))
     with col2:
-        st.metric("Total Commitments (USD Eqv)", format_currency(total_commit_usd, "$"))
+        st.metric("Pipeline Funds", len(pipeline))
     with col3:
-        st.metric("Total Called (USD Eqv)", format_currency(total_called_usd, "$"))
+        st.metric("Total Commitments (USD Eqv)", format_currency(total_commit_usd, "$"))
     with col4:
-        st.metric("Octo True NAV (USD Eqv)", format_currency(total_nav_usd, "$"))
+        st.metric("Total Called (Octo NAV Base)", format_currency(total_called_usd, "$"))
 
     st.divider()
     col1, col2 = st.columns([2, 1])
@@ -709,14 +691,18 @@ def show_overview():
             rows = []
             for f in funds:
                 f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-                total_called = sum(c.get("amount") or 0 for c in f_calls)
-                commitment = f.get("commitment") or 0
-                pct = f"{total_called/commitment*100:.1f}%" if commitment > 0 else "—"
+                total_called = sum(float(c.get("amount") or 0) for c in f_calls)
+                
+                c_val = float(f.get("commitment") or 0)
+                if 0 < c_val <= 1000:
+                    c_val *= 1_000_000
+                
+                pct = f"{total_called/c_val*100:.1f}%" if c_val > 0 else "—"
                 currency_sym = "€" if f.get("currency") == "EUR" else "$"
                 rows.append({
                     "Fund": f["name"],
                     "Currency": f.get("currency", "USD"),
-                    "Commitment": format_currency(commitment, currency_sym) if commitment else "—",
+                    "Commitment": format_currency(c_val, currency_sym),
                     "Total Called": format_currency(total_called, currency_sym) if total_called > 0 else "—",
                     "Called %": pct,
                     "Status": f.get("status", "active").capitalize(),
@@ -729,8 +715,8 @@ def show_overview():
         st.subheader("🔔 Upcoming Events")
         future_calls_found = False
         for f in funds:
-            future = [c for c in calls if c["fund_id"] == f["id"] and c.get("is_future")]
-            for c in future:
+            f_calls = [c for c in calls if c["fund_id"] == f["id"] and c.get("is_future")]
+            for c in f_calls:
                 future_calls_found = True
                 st.markdown(f"""
                 <div style="background:#1a3a1a;border-radius:8px;padding:12px;margin-bottom:8px;">
@@ -749,7 +735,7 @@ def show_overview():
     lp_calls = get_lp_calls()
     payments = get_lp_payments()
     currency_sym = "$" 
-    total_fund_commitment = sum(inv.get("commitment", 0) for inv in investors)
+    total_fund_commitment = sum(float(inv.get("commitment", 0)) for inv in investors)
 
     col_sum1, col_sum2 = st.columns([1, 3])
     with col_sum1:
@@ -766,7 +752,7 @@ def show_overview():
                 for inv in investors:
                     payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
                     if payment and payment["is_paid"]:
-                        paid_commit += inv.get("commitment", 0)
+                        paid_commit += float(inv.get("commitment", 0))
 
                 total_paid_amount = paid_commit * call_pct
                 outstanding = total_called_amount - total_paid_amount
@@ -781,9 +767,22 @@ def show_overview():
         else:
             st.info("No active capital calls yet.")
 
+    # === תוספת: טבלת שערוכים בדשבורד הראשי ===
     st.divider()
-    st.markdown("### 📊 Portfolio Valuations Summary")
+    st.markdown("### 📈 Portfolio Valuations Summary")
+    all_reports = get_quarterly_reports(None)
     if all_reports:
+        # איתור הדוח האחרון ביותר של כל קרן
+        latest_reports = {}
+        for r in all_reports:
+            fid = r["fund_id"]
+            if fid not in latest_reports:
+                latest_reports[fid] = r
+            else:
+                curr = latest_reports[fid]
+                if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                    latest_reports[fid] = r
+        
         summary_data = []
         for f in funds:
             if f["id"] in latest_reports:
@@ -792,12 +791,7 @@ def show_overview():
                 
                 fund_nav = rep.get("nav") or 0
                 
-                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-                octo_called = sum(c.get("amount") or 0 for c in f_calls)
-                tvpi = float(rep.get('tvpi') or 1.0)
-                octo_nav = octo_called * tvpi
-                
-                tvpi_str = f"{tvpi:.2f}x" if rep.get("tvpi") is not None else "—"
+                tvpi_str = f"{float(rep['tvpi']):.2f}x" if rep.get("tvpi") is not None else "—"
                 dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
                 irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
                 
@@ -805,7 +799,6 @@ def show_overview():
                     "Fund Name": f["name"],
                     "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
                     "Fund NAV": format_currency(fund_nav, sym),
-                    "Octo NAV": format_currency(octo_nav, sym),
                     "TVPI": tvpi_str,
                     "DPI": dpi_str,
                     "IRR": irr_str
@@ -892,7 +885,7 @@ def show_investors():
                 with c1:
                     st.write(f"**{inv['name']}**")
                 with c2:
-                    st.write(format_currency(inv.get("commitment", 0), currency_sym))
+                    st.write(format_currency(float(inv.get("commitment", 0)), currency_sym))
                 with c3:
                     if st.button("✏️", key=f"edit_inv_btn_{inv['id']}", help="Edit Investor"):
                         st.session_state[f"editing_inv_{inv['id']}"] = True
@@ -952,7 +945,7 @@ def show_investors():
     total_fund_commitment = 0
     
     for inv in investors:
-        inv_commit = inv.get("commitment", 0)
+        inv_commit = float(inv.get("commitment", 0))
         total_fund_commitment += inv_commit
         row = {
             "id": inv["id"],
@@ -1026,7 +1019,7 @@ def show_investors():
                 for inv in investors:
                     payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
                     if payment and payment["is_paid"]:
-                        paid_commit += inv.get("commitment", 0)
+                        paid_commit += float(inv.get("commitment", 0))
                 
                 total_paid_amount = paid_commit * call_pct
                 outstanding = total_called_amount - total_paid_amount
@@ -1172,10 +1165,13 @@ def show_fund_detail(fund):
     dists = get_distributions(fund["id"])
     reports = get_quarterly_reports(fund["id"])
 
+    # טיפול בהתחייבויות שנשמרו בטעות כיחידות במקום במיליונים בעבר
     commitment = float(fund.get("commitment") or 0)
+    if 0 < commitment <= 1000:
+        commitment *= 1_000_000
     
-    total_called = sum(c.get("amount") or 0 for c in calls if not c.get("is_future"))
-    total_dist = sum(d.get("amount") or 0 for d in dists)
+    total_called = sum(float(c.get("amount") or 0) for c in calls if not c.get("is_future"))
+    total_dist = sum(float(d.get("amount") or 0) for d in dists)
     uncalled = commitment - total_called
     currency_sym = "€" if fund.get("currency") == "EUR" else "$"
 
@@ -1548,7 +1544,7 @@ def show_fund_detail(fund):
                         st.success("✅ Data extracted successfully! Please review and confirm in the form below.")
                     except Exception as e:
                         st.error(f"Error analyzing document: {e}. (If Excel, ensure openpyxl is in requirements.txt)")
-        
+
         st.divider()
         st.markdown("**➕ Or Enter Details Manually**")
         
@@ -1638,7 +1634,7 @@ def show_pipeline():
                     sector = st.text_input("Sector Focus", value=r.get("sector_focus") or "")
                 with col2:
                     fund_size = r.get("fund_size_target") or 0
-                    target_commitment = st.number_input("Our Target Commitment ($M)", min_value=0.0, value=0.0, step=500000.0, format="%.1f")
+                    target_commitment = st.number_input("Our Target Commitment", min_value=0.0, value=0.0, step=500000.0)
                     currency = st.selectbox("Currency", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
                     target_close = st.date_input("Target Close Date")
                     
@@ -1702,7 +1698,7 @@ def show_pipeline():
                 manager = st.text_input("Manager")
                 strategy = st.selectbox("Strategy", ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"])
             with col2:
-                target_commitment_input = st.number_input("Target Commitment ($M)", min_value=0.0, value=0.0, step=500000.0, format="%.1f")
+                target_commitment_input = st.number_input("Target Commitment", min_value=0.0, value=0.0, step=500000.0)
                 currency = st.selectbox("Currency", ["USD", "EUR"])
                 target_close = st.date_input("Closing Date")
                 
@@ -1781,7 +1777,9 @@ def show_pipeline():
                         new_geo = st.text_input("Geographic Focus", value=fund.get("geographic_focus","") or "")
                     with col2:
                         cur_commit = float(fund.get("target_commitment") or 0)
-                        new_commitment_input = st.number_input("Target Commitment ($M)", value=cur_commit, step=500000.0, format="%.1f")
+                        if 0 < cur_commit <= 1000:
+                            cur_commit *= 1_000_000
+                        new_commitment_input = st.number_input("Target Commitment", value=cur_commit, step=500000.0)
                         
                         cur_currency = fund.get("currency","USD")
                         new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_currency=="USD" else 1)
@@ -2115,12 +2113,8 @@ def show_reports():
                 sym = "€" if f.get("currency") == "EUR" else "$"
                 
                 fund_nav = rep.get("nav") or 0
-                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-                octo_called = sum(c.get("amount") or 0 for c in f_calls)
-                tvpi = float(rep.get('tvpi') or 1.0)
-                octo_value = octo_called * tvpi
                 
-                tvpi_str = f"{tvpi:.2f}x" if rep.get("tvpi") is not None else "—"
+                tvpi_str = f"{float(rep['tvpi']):.2f}x" if rep.get("tvpi") is not None else "—"
                 dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
                 irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
                 
@@ -2128,7 +2122,6 @@ def show_reports():
                     "Fund Name": f["name"],
                     "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
                     "Fund NAV": format_currency(fund_nav, sym),
-                    "Octo NAV": format_currency(octo_value, sym),
                     "TVPI": tvpi_str,
                     "DPI": dpi_str,
                     "IRR": irr_str
