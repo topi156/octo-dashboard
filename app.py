@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v8.3 - app.py
-Full Restoration: English UI, Exact Currency, Small Fonts, FULL Pipeline & Gantt
+OCTO FUND DASHBOARD v9.0 - app.py
+Full Restoration + NAV Portfolio Summaries + UI Optimizations
 """
 
 import streamlit as st
@@ -585,7 +585,7 @@ def main():
         ], label_visibility="collapsed")
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 8.3 | Fully Restored & English UI")
+        st.caption("Version 9.0 | Full UI & NAV Engine")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -658,15 +658,38 @@ def show_overview():
     total_commitment_usd = sum(f.get("commitment") or 0 for f in funds if f.get("currency") == "USD")
     total_commitment_eur = sum(f.get("commitment") or 0 for f in funds if f.get("currency") == "EUR")
 
-    col1, col2, col3, col4 = st.columns(4)
+    # שליפת הדוחות העדכניים ביותר לחישוב השערוך של התיק
+    latest_reports = {}
+    for r in get_quarterly_reports():
+        fid = r["fund_id"]
+        if fid not in latest_reports:
+            latest_reports[fid] = r
+        else:
+            curr = latest_reports[fid]
+            if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                latest_reports[fid] = r
+                
+    total_nav_usd = 0
+    total_nav_eur = 0
+    for f in funds:
+        if f["id"] in latest_reports:
+            nav = latest_reports[f["id"]].get("nav") or 0
+            if f.get("currency") == "EUR":
+                total_nav_eur += nav
+            else:
+                total_nav_usd += nav
+
+    # עיצוב מחדש של המדדים בשתי שורות נקיות
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Active Funds", len(funds))
+        st.metric("Pipeline Funds", len(pipeline))
     with col2:
         st.metric("USD Commitments", format_currency(total_commitment_usd, "$"))
-    with col3:
         st.metric("EUR Commitments", format_currency(total_commitment_eur, "€"))
-    with col4:
-        st.metric("Pipeline Funds", len(pipeline))
+    with col3:
+        st.metric("Portfolio NAV (USD)", format_currency(total_nav_usd, "$"))
+        st.metric("Portfolio NAV (EUR)", format_currency(total_nav_eur, "€"))
 
     st.divider()
     col1, col2 = st.columns([2, 1])
@@ -771,7 +794,7 @@ def show_investors():
                     with c1:
                         inv_name = st.text_input("Investor Name")
                     with c2:
-                        inv_commit = st.number_input(f"Commitment Amount ({currency_sym})", min_value=0.0)
+                        inv_commit = st.number_input(f"Commitment Amount ({currency_sym})", min_value=0.0, step=500000.0)
                     if st.form_submit_button("Save Investor", type="primary"):
                         try:
                             sb.table("investors").insert({"name": inv_name, "commitment": inv_commit}).execute()
@@ -853,7 +876,7 @@ def show_investors():
                 if st.session_state.get(f"editing_inv_{inv['id']}"):
                     with st.form(f"edit_inv_form_{inv['id']}"):
                         new_name = st.text_input("Investor Name", value=inv["name"])
-                        new_commit = st.number_input("Commitment", value=float(inv.get("commitment", 0)))
+                        new_commit = st.number_input("Commitment", value=float(inv.get("commitment", 0)), step=500000.0)
                         ce1, ce2 = st.columns(2)
                         with ce1:
                             if st.form_submit_button("💾 Save Changes"):
@@ -1066,7 +1089,7 @@ def show_portfolio():
                 new_strategy = st.selectbox("Strategy", strategy_opts)
                 new_geo = st.text_input("Geographic Focus")
             with col2:
-                new_commitment = st.number_input("Commitment Amount ($ / € Exact Amount)", min_value=0.0)
+                new_commitment = st.number_input("Commitment Amount ($ / € Exact Amount)", min_value=0.0, step=500000.0)
                 new_currency = st.selectbox("Currency", ["USD", "EUR"])
                 new_date = st.date_input("Investment Date")
                 status_opts = ["active", "closed", "exited"]
@@ -1164,7 +1187,7 @@ def show_fund_detail(fund):
                     index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
                 new_geo = st.text_input("Geographic Focus", value=fund.get("geographic_focus","") or "")
             with col2:
-                new_commitment = st.number_input("Commitment (Exact Amount)", value=float(commitment), min_value=0.0)
+                new_commitment = st.number_input("Commitment (Exact Amount)", value=float(commitment), min_value=0.0, step=500000.0)
                 
                 cur_cur = fund.get("currency","USD")
                 new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_cur=="USD" else 1)
@@ -1973,13 +1996,56 @@ def show_gantt(tasks, fund):
                 else:
                     st.error("Please enter a task name")
 
-
 def show_reports():
     st.title("📈 Quarterly Reports")
     funds = get_funds()
     if not funds:
         st.info("No funds in the system")
         return
+
+    # --- הוספת טבלת סיכום שערוכים ---
+    st.subheader("📊 Portfolio Valuations Summary")
+    all_reports = get_quarterly_reports()
+    if all_reports:
+        # איתור הדוח האחרון ביותר של כל קרן
+        latest_reports = {}
+        for r in all_reports:
+            fid = r["fund_id"]
+            if fid not in latest_reports:
+                latest_reports[fid] = r
+            else:
+                curr = latest_reports[fid]
+                if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                    latest_reports[fid] = r
+        
+        summary_data = []
+        for f in funds:
+            if f["id"] in latest_reports:
+                rep = latest_reports[f["id"]]
+                sym = "€" if f.get("currency") == "EUR" else "$"
+                nav = rep.get("nav") or 0
+                
+                tvpi_str = f"{float(rep['tvpi']):.2f}x" if rep.get("tvpi") is not None else "—"
+                dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
+                irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
+                
+                summary_data.append({
+                    "Fund Name": f["name"],
+                    "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
+                    "NAV": format_currency(nav, sym),
+                    "TVPI": tvpi_str,
+                    "DPI": dpi_str,
+                    "IRR": irr_str
+                })
+        if summary_data:
+            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No valuation data available yet.")
+    else:
+        st.info("No reports have been uploaded yet.")
+
+    st.divider()
+    st.markdown("### 🔍 Detailed Fund Reports")
 
     fund_options = {f["name"]: f["id"] for f in funds}
     selected_fund_name = st.selectbox("Select Fund", list(fund_options.keys()))
