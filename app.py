@@ -1667,7 +1667,7 @@ def show_pipeline():
                         new_geo = st.text_input("Geographic Focus", value=fund.get("geographic_focus","") or "")
                     with col2:
                         cur_commit = float(fund.get("target_commitment") or 0)
-                        new_commitment_input = st.number_input("Target Commitment (Exact Amount)", value=cur_commit, min_value=0.0)
+                        new_commitment_input = st.number_input("Target Commitment ($M)", value=cur_commit, step=0.5, format="%.1f")
                         
                         cur_currency = fund.get("currency","USD")
                         new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_currency=="USD" else 1)
