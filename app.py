@@ -578,7 +578,7 @@ def main():
         st.divider()
         st.markdown("### 💱 FX Rate")
         # שמירת שער ההמרה במצב של הפעלה כדי שיחול על כל האתר
-        eur_usd_rate = st.number_input("EUR to USD Rate", value=1.08, step=0.01)
+        eur_usd_rate = st.number_input("EUR to USD Rate", value=1.0800, step=0.0001, format="%.4f")
         st.session_state.eur_usd_rate = eur_usd_rate
 
         st.divider()
