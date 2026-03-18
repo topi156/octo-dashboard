@@ -1265,15 +1265,13 @@ def show_fund_detail(fund):
     dists = get_distributions(fund["id"])
     reports = get_quarterly_reports(fund["id"])
 
-    # תאימות למספרים קטנים שהוזנו בטעות במיליונים (למשל 6.5)
-    commitment = float(fund.get("commitment") or 0)
-    if 0 < commitment <= 1000:
-        commitment *= 1_000_000
+    # NEW: Use proper metrics calculation
+    metrics = calculate_fund_metrics(fund, calls, dists)
     
-    total_called = sum(float(c.get("amount") or 0) for c in calls if not c.get("is_future"))
-    total_dist = sum(float(d.get("amount") or 0) for d in dists)
-    uncalled = commitment - total_called
-    currency_sym = "€" if fund.get("currency") == "EUR" else "$"
+    commitment = metrics["commitment"]
+    total_called = metrics["total_called"]
+    total_dist = metrics["total_distributed"]
+    uncalled = metrics["uncalled"]
 
     col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
     with col1:
