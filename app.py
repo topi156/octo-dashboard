@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4.3 - app.py
-Master Version: True Double-Entry PE Accounting for Deemed Distributions
+OCTO FUND DASHBOARD v9.4.4 - app.py
+Master Version: Smart Aggregated Upcoming Events (Net Wire Calculation)
 """
 
 import streamlit as st
@@ -101,11 +101,6 @@ FUND PRESENTATION TEXT:
     return json.loads(content.strip())
 
 def calculate_fund_metrics(fund, calls, dists):
-    """
-    מנוע חישוב חשבונאי מלא (v9.4.3):
-    - Distributions שמוזנות כ-Call (Deemed Distributions) מתווספות אוטומטית ל-Total Distributed.
-    - רק פעולות שמסומנות ב-affects_called מפחיתות את ה-Total Called.
-    """
     commitment = float(fund.get("commitment") or 0)
     if 0 < commitment <= 1000:
         commitment *= 1_000_000
@@ -124,7 +119,6 @@ def calculate_fund_metrics(fund, calls, dists):
         
         affects_called = c.get("affects_called")
         if affects_called is None:
-            # Default fallback
             affects_called = (tx_type == "repayment")
             
         if tx_type == "call":
@@ -134,7 +128,6 @@ def calculate_fund_metrics(fund, calls, dists):
             if affects_called:
                 total_called -= amount
         elif tx_type == "distribution":
-            # הוספת חלוקה רעיונית ל-Total Distributed!
             total_dist += amount
             if affects_called:
                 total_called -= amount
@@ -532,23 +525,41 @@ def check_and_show_alerts():
     funds_dict = {f["id"]: f for f in get_funds()}
     pipe_dict = {f["id"]: f["name"] for f in get_pipeline_funds()}
 
+    # Aggragating calls by fund and payment date to show ONE alert per date
+    upcoming_fund_events = {}
     for cc in get_capital_calls():
         if not cc.get("payment_date"): continue
         try:
             deadline = datetime.strptime(str(cc["payment_date"]).split("T")[0], "%Y-%m-%d").date()
-            days_left = (deadline - today).days
+            if deadline >= today:
+                key = (cc["fund_id"], deadline)
+                if key not in upcoming_fund_events:
+                    upcoming_fund_events[key] = {
+                        "fund_name": funds_dict.get(cc["fund_id"], {}).get("name", "Unknown Fund"),
+                        "currency": funds_dict.get(cc["fund_id"], {}).get("currency", "USD"),
+                        "net_wire": 0.0,
+                        "days_left": (deadline - today).days
+                    }
+                
+                tx_type = cc.get("transaction_type", "call")
+                amt = float(cc.get("amount", 0))
+                interest = float(cc.get("equalisation_interest", 0))
+                
+                if tx_type == "call":
+                    upcoming_fund_events[key]["net_wire"] += (amt + interest)
+                else: # repayment or distribution
+                    upcoming_fund_events[key]["net_wire"] -= amt
         except: continue
 
-        if days_left in [0, 1, 3, 7]:
-            fund_info = funds_dict.get(cc.get("fund_id"), {})
-            fname = fund_info.get("name", "Unknown Fund")
-            curr = "€" if fund_info.get("currency") == "EUR" else "$"
-            
-            total_cash = float(cc.get("amount", 0)) + float(cc.get("equalisation_interest", 0))
-            amt = format_currency(total_cash, curr)
+    for key, data in upcoming_fund_events.items():
+        days_left = data["days_left"]
+        if days_left in [0, 1, 3, 7, 13, 14]: # Added 13/14 so alerts show up immediately for March 31
+            fname = data["fund_name"]
+            sym = "€" if data["currency"] == "EUR" else "$"
+            amt = format_currency(data["net_wire"], sym)
             
             if days_left in [0, 1]:
-                alert_id = f"cc_banner_{cc['id']}_{days_left}"
+                alert_id = f"net_banner_{key[0]}_{key[1]}"
                 if alert_id not in st.session_state.dismissed_banners:
                     c1, c2 = st.columns([15, 1])
                     with c1:
@@ -561,9 +572,9 @@ def check_and_show_alerts():
                             st.session_state.dismissed_banners.add(alert_id)
                             st.rerun()
             else:
-                alert_id = f"cc_toast_{cc['id']}_{days_left}"
+                alert_id = f"net_toast_{key[0]}_{key[1]}_{days_left}"
                 if alert_id not in st.session_state.shown_toasts:
-                    st.toast(f"🔔 Upcoming: Capital Call for {fname} in {days_left} days.", icon="💸")
+                    st.toast(f"🔔 Upcoming: Capital Call for {fname} in {days_left} days. Wire: {amt}", icon="💸")
                     st.session_state.shown_toasts.add(alert_id)
 
     for lpc in get_lp_calls():
@@ -670,7 +681,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.3 | Master Full Release")
+        st.caption("Version 9.4.4 | Aggregated Events Engine")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -822,21 +833,56 @@ def show_overview():
 
     with col2:
         st.subheader("🔔 Upcoming Events")
-        future_calls_found = False
+        today = date.today()
+        upcoming_events = {}
+        
+        # New Smart Aggregation Logic for Upcoming Events
         for f in funds:
-            future = [c for c in calls if c["fund_id"] == f["id"] and c.get("is_future")]
-            for c in future:
-                future_calls_found = True
-                total_cash = float(c.get("amount", 0)) + float(c.get("equalisation_interest", 0))
+            f_calls = [c for c in calls if c["fund_id"] == f["id"]]
+            for c in f_calls:
+                if not c.get("payment_date"): continue
+                try:
+                    p_date = datetime.strptime(str(c.get("payment_date")).split("T")[0], "%Y-%m-%d").date()
+                    if p_date >= today:
+                        key = (f["id"], p_date)
+                        if key not in upcoming_events:
+                            upcoming_events[key] = {
+                                "fund_name": f["name"],
+                                "currency": f.get("currency", "USD"),
+                                "net_wire": 0.0,
+                                "calls_included": []
+                            }
+                        
+                        tx_type = c.get("transaction_type", "call")
+                        amt = float(c.get("amount", 0))
+                        interest = float(c.get("equalisation_interest", 0))
+                        
+                        if tx_type == "call":
+                            upcoming_events[key]["net_wire"] += (amt + interest)
+                        else:
+                            upcoming_events[key]["net_wire"] -= amt
+                            
+                        upcoming_events[key]["calls_included"].append(str(c.get("call_number")))
+                except:
+                    pass
+        
+        if upcoming_events:
+            for key, data in sorted(upcoming_events.items(), key=lambda x: x[0][1]):
+                sym = "€" if data["currency"] == "EUR" else "$"
+                net_wire = data["net_wire"]
+                date_str = key[1].strftime("%Y-%m-%d")
+                calls_str = ", ".join(data["calls_included"])
+                
                 st.markdown(f"""
-                <div style="background:#1a3a1a;border-radius:8px;padding:12px;margin-bottom:8px;">
-                    <small style="color:#4ade80">{c.get('payment_date','')}</small><br>
-                    <strong>{f['name']}</strong><br>
-                    <span style="color:#94a3b8">Call #{c.get('call_number')} | Wire: {format_currency(total_cash, '$')}</span>
+                <div style="background:#1a3a1a;border-radius:8px;padding:12px;margin-bottom:8px;border-left:4px solid #4ade80;">
+                    <small style="color:#4ade80">Payment Due: {date_str}</small><br>
+                    <strong>{data['fund_name']}</strong><br>
+                    <span style="color:#94a3b8">Included items: {calls_str}</span><br>
+                    <span style="font-size:16px; font-weight:bold; color:white;">Net Wire: {format_currency(net_wire, sym)}</span>
                 </div>
                 """, unsafe_allow_html=True)
-        if not future_calls_found:
-            st.info("💡 Add future Capital Calls to see forecasts here")
+        else:
+            st.info("💡 No upcoming capital calls (based on Payment Date).")
 
     st.divider()
     st.subheader("📊 FOF Collection Summary")
@@ -1402,7 +1448,7 @@ def show_fund_detail(fund):
                         st.write(f"**Type:** {tx_type.capitalize()}")
                         st.write(f"Call Date: {c.get('call_date','')}")
                         st.write(f"Payment Date: {c.get('payment_date','')}")
-                        st.write(f"Amount: {format_currency(float(c.get('amount',0)), currency_sym)}")
+                        st.write(f"Cash Amount: {format_currency(float(c.get('amount',0)), currency_sym)}")
                     with col2:
                         affects = c.get("affects_called")
                         affects_text = "Yes" if (affects or (affects is None and tx_type == "repayment")) else "No"
@@ -2247,223 +2293,6 @@ def show_gantt(tasks, fund):
                         st.error(f"Error: {e}")
                 else:
                     st.error("Please enter a task name")
-
-def show_reports():
-    st.title("📈 Quarterly Reports")
-    funds = get_funds()
-    calls = get_capital_calls()
-    if not funds:
-        st.info("No funds in the system")
-        return
-
-    st.subheader("📊 Portfolio Valuations Summary")
-    all_reports = get_quarterly_reports(None)
-    if all_reports:
-        latest_reports = {}
-        for r in all_reports:
-            fid = r["fund_id"]
-            if fid not in latest_reports:
-                latest_reports[fid] = r
-            else:
-                curr = latest_reports[fid]
-                if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
-                    latest_reports[fid] = r
-        
-        summary_data = []
-        for f in funds:
-            if f["id"] in latest_reports:
-                rep = latest_reports[f["id"]]
-                sym = "€" if f.get("currency") == "EUR" else "$"
-                
-                fund_nav = rep.get("nav") or 0
-                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-                
-                f_dists = get_distributions(f["id"])
-                f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
-                octo_called = f_metrics["total_called"]
-                
-                tvpi = float(rep.get('tvpi') or 1.0)
-                octo_value = octo_called * tvpi
-                
-                tvpi_str = f"{tvpi:.2f}x" if rep.get("tvpi") is not None else "—"
-                dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
-                irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
-                
-                summary_data.append({
-                    "Fund Name": f["name"],
-                    "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
-                    "Fund NAV": format_currency(fund_nav, sym),
-                    "Octo NAV": format_currency(octo_value, sym),
-                    "TVPI": tvpi_str,
-                    "DPI": dpi_str,
-                    "IRR": irr_str
-                })
-        if summary_data:
-            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("No valuation data available yet.")
-    else:
-        st.info("No reports have been uploaded yet.")
-
-    st.divider()
-    st.markdown("### 🔍 Detailed Fund Reports")
-
-    fund_options = {f["name"]: f["id"] for f in funds}
-    selected_fund_name = st.selectbox("Select Fund", list(fund_options.keys()))
-    fund_id = fund_options[selected_fund_name]
-    reports = get_quarterly_reports(fund_id)
-
-    if reports:
-        col_hdr1, col_hdr2 = st.columns([4, 1])
-        with col_hdr1:
-            st.subheader(f"Reports – {selected_fund_name}")
-        with col_hdr2:
-            df_rep = pd.DataFrame([{"Year": r["year"], "Quarter": f"Q{r['quarter']}", "NAV": r.get("nav"),
-                                    "TVPI": r.get("tvpi"), "DPI": r.get("dpi"), "RVPI": r.get("rvpi"),
-                                    "IRR %": r.get("irr"), "Notes": r.get("notes","")} for r in reports])
-            excel_data = convert_df_to_excel(df_rep)
-            st.download_button("📥 Export to Excel", data=excel_data, file_name=f"Reports_{selected_fund_name}_{date.today()}.xlsx", use_container_width=True)
-            
-        st.dataframe(df_rep, use_container_width=True, hide_index=True)
-
-        st.markdown("#### ⚙️ Manage Reports (Edit / Delete)")
-        for r in reports:
-            with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
-                col1, col_edit, col_del = st.columns([3, 1, 1])
-                with col1:
-                    st.write(f"NAV (Fund): {format_currency(float(r.get('nav',0)), '$')} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
-                with col_edit:
-                    if st.button("✏️ Edit", key=f"edit_rep_global_{r['id']}"):
-                        st.session_state[f"editing_rep_g_{r['id']}"] = True
-                with col_del:
-                    if st.button("🗑️ Delete", key=f"del_rep_global_{r['id']}"):
-                        st.session_state[f"confirm_del_rep_g_{r['id']}"] = True
-                        
-                if st.session_state.get(f"confirm_del_rep_g_{r['id']}"):
-                    st.warning("Delete this report?")
-                    rc1, rc2 = st.columns(2)
-                    with rc1:
-                        if st.button("✅ Yes, Delete", key=f"yes_rep_g_{r['id']}"):
-                            try:
-                                log_action("DELETE", "quarterly_reports", f"Deleted report Q{r['quarter']}/{r['year']} of {selected_fund_name}", r)
-                                get_supabase().table("quarterly_reports").delete().eq("id", r["id"]).execute()
-                                st.session_state.pop(f"confirm_del_rep_g_{r['id']}", None)
-                                clear_cache_and_rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-                    with rc2:
-                        if st.button("❌ Cancel", key=f"no_rep_g_{r['id']}"):
-                            st.session_state.pop(f"confirm_del_rep_g_{r['id']}", None)
-                            st.rerun()
-
-                if st.session_state.get(f"editing_rep_g_{r['id']}"):
-                    with st.form(f"edit_rep_g_form_{r['id']}"):
-                        st.markdown("**✏️ Edit Report Details**")
-                        e_c1, e_c2, e_c3 = st.columns(3)
-                        with e_c1:
-                            edit_year = st.number_input("Year", value=int(r['year']), min_value=2020, max_value=2030)
-                            edit_quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(int(r['quarter'])))
-                            try:
-                                def_rep_date = datetime.fromisoformat(str(r['report_date'])).date() if r.get('report_date') else date.today()
-                            except:
-                                def_rep_date = date.today()
-                            edit_rep_date = st.date_input("Report Date", value=def_rep_date)
-                        with e_c2:
-                            edit_nav = st.number_input("NAV", value=float(r.get('nav') or 0.0), min_value=0.0)
-                            edit_tvpi = st.number_input("TVPI", value=float(r.get('tvpi') or 0.0), step=0.01, format="%.2f")
-                            edit_dpi = st.number_input("DPI", value=float(r.get('dpi') or 0.0), step=0.01, format="%.2f")
-                        with e_c3:
-                            edit_rvpi = st.number_input("RVPI", value=float(r.get('rvpi') or 0.0), step=0.01, format="%.2f")
-                            edit_irr = st.number_input("IRR %", value=float(r.get('irr') or 0.0), step=0.1, format="%.1f")
-                            edit_notes = st.text_area("Notes", value=r.get('notes') or "")
-                        
-                        save_c1, save_c2 = st.columns(2)
-                        with save_c1:
-                            if st.form_submit_button("💾 Save Changes", type="primary"):
-                                try:
-                                    get_supabase().table("quarterly_reports").update({
-                                        "year": edit_year, "quarter": edit_quarter,
-                                        "report_date": str(edit_rep_date), "nav": edit_nav,
-                                        "tvpi": edit_tvpi, "dpi": edit_dpi, "rvpi": edit_rvpi, 
-                                        "irr": edit_irr, "notes": edit_notes
-                                    }).eq("id", r["id"]).execute()
-                                    st.session_state.pop(f"editing_rep_g_{r['id']}", None)
-                                    clear_cache_and_rerun()
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
-                        with save_c2:
-                            if st.form_submit_button("❌ Close"):
-                                st.session_state.pop(f"editing_rep_g_{r['id']}", None)
-                                st.rerun()
-    else:
-        st.info("No quarterly reports for this fund yet.")
-
-    st.divider()
-    st.markdown("**🤖 Add Quarterly Report from File (AI Extraction)**")
-    uploaded_rep_file = st.file_uploader("Upload Quarterly Report (PDF / Excel / CSV)", type=["pdf", "xlsx", "xls", "csv"], key="global_rep_uploader")
-    
-    if uploaded_rep_file:
-        if st.button("Analyze Document Now", type="primary", key="global_rep_analyze_btn"):
-            with st.spinner("Claude is analyzing the report..."):
-                try:
-                    file_bytes = uploaded_rep_file.read()
-                    file_name = uploaded_rep_file.name
-                    if file_name.lower().endswith('.pdf'):
-                        rep_text = extract_pdf_text(file_bytes)
-                    else:
-                        if file_name.lower().endswith('.csv'):
-                            df = pd.read_csv(io.BytesIO(file_bytes))
-                        else:
-                            df = pd.read_excel(io.BytesIO(file_bytes))
-                        rep_text = df.to_string(index=False)
-                        if len(rep_text) > 12000:
-                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
-                    
-                    ai_result = analyze_quarterly_report_with_ai(rep_text)
-                    st.session_state["global_rep_ai_result"] = ai_result
-                    st.success("✅ Data extracted successfully! Please review and confirm in the form below.")
-                except Exception as e:
-                    st.error(f"Error analyzing document: {e}. (If Excel, ensure openpyxl is in requirements.txt)")
-
-    st.divider()
-    st.markdown("**➕ Or Enter Details Manually**")
-    
-    ai_rep = st.session_state.get("global_rep_ai_result", {})
-    
-    def_year = int(ai_rep.get("year")) if ai_rep.get("year") else 2025
-    def_quarter = int(ai_rep.get("quarter")) if ai_rep.get("quarter") in [1,2,3,4] else 1
-    
-    def_rep_date = date.today()
-    if ai_rep.get("report_date"):
-        try: def_rep_date = datetime.strptime(ai_rep["report_date"], "%Y-%m-%d").date()
-        except: pass
-
-    with st.form("add_report"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            year = st.number_input("Year", value=def_year, min_value=2020, max_value=2030)
-            quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(def_quarter))
-            report_date = st.date_input("Report Date", value=def_rep_date)
-        with col2:
-            nav = st.number_input("NAV (Fund Level)", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
-            tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("tvpi") or 0.0))
-            dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("dpi") or 0.0))
-        with col3:
-            rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("rvpi") or 0.0))
-            irr = st.number_input("IRR %", step=0.1, format="%.1f", value=float(ai_rep.get("irr") or 0.0))
-            notes = st.text_area("Notes")
-        if st.form_submit_button("Save Report", type="primary"):
-            try:
-                get_supabase().table("quarterly_reports").upsert({
-                    "fund_id": fund_id, "year": year, "quarter": quarter,
-                    "report_date": str(report_date), "nav": nav,
-                    "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes
-                }).execute()
-                st.session_state.pop("global_rep_ai_result", None)
-                st.success("✅ Report saved!")
-                clear_cache_and_rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
 
 if __name__ == "__main__":
     main()
