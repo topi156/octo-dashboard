@@ -804,11 +804,16 @@ def show_overview():
         called = metrics["total_called"]
         total_called_usd += called * rate
         
-        tvpi = 1.0
-        if f["id"] in latest_reports and latest_reports[f["id"]].get("tvpi"):
+        rvpi = 0.0
+        if f["id"] in latest_reports and latest_reports[f["id"]].get("rvpi"):
+            rvpi = float(latest_reports[f["id"]]["rvpi"])
+        elif f["id"] in latest_reports and latest_reports[f["id"]].get("tvpi"):
+            # Fallback if RVPI is missing but TVPI is there
             tvpi = float(latest_reports[f["id"]]["tvpi"])
+            total_dist = f_metrics["total_distributed"]
+            rvpi = tvpi - (total_dist / called) if called > 0 else 0.0
             
-        total_nav_usd += (called * tvpi) * rate
+        total_nav_usd += (called * rvpi) * rate
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
