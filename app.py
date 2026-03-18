@@ -762,16 +762,19 @@ def show_overview():
     total_nav_usd = 0
 
     for f in funds:
-        rate = st.session_state.eur_usd_rate if f.get("currency") == "EUR" else 1.0
-        
-        c_val = float(f.get("commitment") or 0)
-        if 0 < c_val <= 1000:
-            c_val *= 1_000_000
-        total_commit_usd += c_val * rate
-        
-        f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-        called = sum(float(c.get("amount") or 0) for c in f_calls)
-        total_called_usd += called * rate
+    rate = st.session_state.eur_usd_rate if f.get("currency") == "EUR" else 1.0
+    
+    c_val = float(f.get("commitment") or 0)
+    if 0 < c_val <= 1000:
+        c_val *= 1_000_000
+    total_commit_usd += c_val * rate
+    
+    # NEW: Use proper calculation
+    f_calls = [c for c in calls if c["fund_id"] == f["id"]]
+    f_dists = [d for d in get_distributions() if d["fund_id"] == f["id"]]
+    metrics = calculate_fund_metrics(f, f_calls, f_dists)
+    called = metrics["total_called"]
+    total_called_usd += called * rate
         
         tvpi = 1.0
         if f["id"] in latest_reports and latest_reports[f["id"]].get("tvpi"):
