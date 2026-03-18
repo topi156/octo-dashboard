@@ -931,7 +931,11 @@ def show_overview():
                 octo_called = octo_metrics["total_called"]
                 
                 tvpi = float(rep.get('tvpi') or 1.0)
-                octo_nav = octo_called * tvpi
+                rvpi = float(rep.get('rvpi') or 0.0)
+                if rvpi > 0:
+                    octo_nav = octo_called * rvpi
+                else:
+                    octo_nav = (octo_called * tvpi) - f_metrics["total_distributed"]
                 
                 tvpi_str = f"{tvpi:.2f}x" if rep.get("tvpi") is not None else "—"
                 dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
