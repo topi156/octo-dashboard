@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4.2 - app.py
-Master Version: Dynamic FX Rate, Equalisation Cash vs Commitment fix, Exact NAV Math
+OCTO FUND DASHBOARD v9.4.3 - app.py
+Master Version: True Double-Entry PE Accounting for Deemed Distributions
 """
 
 import streamlit as st
@@ -102,8 +102,9 @@ FUND PRESENTATION TEXT:
 
 def calculate_fund_metrics(fund, calls, dists):
     """
-    חישוב מעודכן: מאפשר להשתמש בשדה Investments עבור Commitment Impact,
-    ובכך משאיר את ה-Amount כנטו תזרים מזומנים (Cash flow)
+    מנוע חישוב חשבונאי מלא (v9.4.3):
+    - Distributions שמוזנות כ-Call (Deemed Distributions) מתווספות אוטומטית ל-Total Distributed.
+    - רק פעולות שמסומנות ב-affects_called מפחיתות את ה-Total Called.
     """
     commitment = float(fund.get("commitment") or 0)
     if 0 < commitment <= 1000:
@@ -111,6 +112,7 @@ def calculate_fund_metrics(fund, calls, dists):
     
     total_called = 0
     total_equalisation_interest = 0
+    total_dist = sum(float(d.get("amount") or 0) for d in dists)
     
     for c in calls:
         if c.get("is_future"):
@@ -118,25 +120,25 @@ def calculate_fund_metrics(fund, calls, dists):
             
         tx_type = c.get("transaction_type", "call")
         amount = float(c.get("amount") or 0)
-        investments = float(c.get("investments") or 0)
         eq_interest = float(c.get("equalisation_interest") or 0)
         
         affects_called = c.get("affects_called")
         if affects_called is None:
-            affects_called = True
-            
-        # אם יש ערך בשדה Investments, הוא מייצג את הנגיסה האמיתית ב-Commitment
-        commitment_impact = investments if investments > 0 else amount
+            # Default fallback
+            affects_called = (tx_type == "repayment")
             
         if tx_type == "call":
-            total_called += commitment_impact
+            total_called += amount
             total_equalisation_interest += eq_interest
-        elif tx_type == "repayment" and affects_called:
-            total_called -= commitment_impact
-        elif tx_type == "distribution" and affects_called:
-            total_called -= commitment_impact
+        elif tx_type == "repayment":
+            if affects_called:
+                total_called -= amount
+        elif tx_type == "distribution":
+            # הוספת חלוקה רעיונית ל-Total Distributed!
+            total_dist += amount
+            if affects_called:
+                total_called -= amount
     
-    total_dist = sum(float(d.get("amount") or 0) for d in dists)
     uncalled = commitment - total_called
     
     return {
@@ -364,7 +366,9 @@ def generate_master_excel_bytes() -> bytes:
             funds_list = []
             for f in funds:
                 calls = get_capital_calls(f["id"])
-                total_called = sum(c.get("investments") if c.get("investments") and float(c.get("investments")) > 0 else c.get("amount", 0) for c in calls if c.get("transaction_type", "call") == "call")
+                dists = get_distributions(f["id"])
+                metrics = calculate_fund_metrics(f, calls, dists)
+                total_called = metrics["total_called"]
                 funds_list.append({
                     "Fund Name": f.get("name"),
                     "Manager": f.get("manager"),
@@ -540,7 +544,6 @@ def check_and_show_alerts():
             fname = fund_info.get("name", "Unknown Fund")
             curr = "€" if fund_info.get("currency") == "EUR" else "$"
             
-            # חישוב הסכום להעברה ברוטו (כולל ריבית)
             total_cash = float(cc.get("amount", 0)) + float(cc.get("equalisation_interest", 0))
             amt = format_currency(total_cash, curr)
             
@@ -667,7 +670,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.2 | Master Full Release")
+        st.caption("Version 9.4.3 | Master Full Release")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -768,14 +771,12 @@ def show_overview():
         called = metrics["total_called"]
         total_called_usd += called * rate
         
-        # חישוב NAV מדויק מבוסס RVPI
         if f["id"] in latest_reports:
             rvpi = float(latest_reports[f["id"]].get("rvpi") or 0.0)
             tvpi = float(latest_reports[f["id"]].get("tvpi") or 1.0)
             if rvpi > 0:
                 total_nav_usd += (called * rvpi) * rate
             else:
-                # Fallback only if RVPI is not provided
                 total_nav_usd += ((called * tvpi) - metrics["total_distributed"]) * rate
 
     col1, col2, col3, col4 = st.columns(4)
@@ -796,7 +797,7 @@ def show_overview():
         if funds:
             rows = []
             for f in funds:
-                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
+                f_calls = [c for c in calls if c["fund_id"] == f["id"]]
                 f_dists = get_distributions(f["id"])
                 f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
                 total_called = f_metrics["total_called"]
@@ -826,10 +827,7 @@ def show_overview():
             future = [c for c in calls if c["fund_id"] == f["id"] and c.get("is_future")]
             for c in future:
                 future_calls_found = True
-                
-                # חישוב הסכום להעברה ברוטו (כולל ריבית)
                 total_cash = float(c.get("amount", 0)) + float(c.get("equalisation_interest", 0))
-                
                 st.markdown(f"""
                 <div style="background:#1a3a1a;border-radius:8px;padding:12px;margin-bottom:8px;">
                     <small style="color:#4ade80">{c.get('payment_date','')}</small><br>
@@ -890,12 +888,11 @@ def show_overview():
                 
                 fund_nav = rep.get("nav") or 0
                 
-                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
+                f_calls = [c for c in calls if c["fund_id"] == f["id"]]
                 f_dists = get_distributions(f["id"])
                 octo_metrics = calculate_fund_metrics(f, f_calls, f_dists)
                 octo_called = octo_metrics["total_called"]
                 
-                # חישוב מדויק של Octo NAV על בסיס RVPI
                 rvpi = float(rep.get('rvpi') or 0.0)
                 tvpi = float(rep.get('tvpi') or 1.0)
                 if rvpi > 0:
@@ -1392,12 +1389,11 @@ def show_fund_detail(fund):
                 tx_type = c.get("transaction_type", "call")
                 icon = "🔮" if c.get("is_future") else tx_icons.get(tx_type, "💰")
                 
-                # חישוב הסכום נטו להעברה להצגה בכותרת
                 total_cash = float(c.get("amount", 0)) + float(c.get("equalisation_interest", 0))
                 
                 with st.expander(
                     f"{icon} Call #{c.get('call_number')} | {c.get('payment_date','')} | "
-                    f"Wire: {format_currency(total_cash, currency_sym)} "
+                    f"Wire/Amount: {format_currency(total_cash, currency_sym)} "
                     f"{'🔮' if c.get('is_future') else '✅'}", 
                     expanded=False
                 ):
@@ -1406,14 +1402,15 @@ def show_fund_detail(fund):
                         st.write(f"**Type:** {tx_type.capitalize()}")
                         st.write(f"Call Date: {c.get('call_date','')}")
                         st.write(f"Payment Date: {c.get('payment_date','')}")
-                        st.write(f"Cash Amount: {format_currency(float(c.get('amount',0)), currency_sym)}")
+                        st.write(f"Amount: {format_currency(float(c.get('amount',0)), currency_sym)}")
                     with col2:
-                        st.write(f"Commitment Impact (Investments): {format_currency(float(c.get('investments',0)), currency_sym)}")
+                        affects = c.get("affects_called")
+                        affects_text = "Yes" if (affects or (affects is None and tx_type == "repayment")) else "No"
+                        st.write(f"Reduces Total Called: {affects_text}")
                         
                         eq_interest = float(c.get('equalisation_interest', 0))
                         if eq_interest > 0:
                             st.write(f"⚠️ Equalisation Interest: {format_currency(eq_interest, currency_sym)}")
-                            st.write(f"**Total Wire Amount:** {format_currency(total_cash, currency_sym)}")
                         
                         if c.get('notes'):
                             st.write(f"Notes: {c.get('notes')}")
@@ -1437,13 +1434,13 @@ def show_fund_detail(fund):
                                 st.session_state.pop(f"confirm_del_call_{c['id']}", None)
                                 st.rerun()
 
-            chart_data = [c for c in calls if not c.get("is_future") and (c.get("amount") or c.get("investments"))]
+            chart_data = [c for c in calls if not c.get("is_future") and c.get("transaction_type") == "call" and c.get("amount")]
             if chart_data:
                 fig = px.bar(
                     x=[f"Call #{c['call_number']}" for c in chart_data],
-                    y=[float(c.get("investments") if float(c.get("investments",0)) > 0 else c.get("amount",0)) for c in chart_data],
-                    labels={"x": "Call", "y": f"Commitment Impact ({fund.get('currency','USD')})"},
-                    title="Capital Calls History (Commitment Usage)",
+                    y=[float(c.get("amount",0)) for c in chart_data],
+                    labels={"x": "Call", "y": f"Amount ({fund.get('currency','USD')})"},
+                    title="Capital Calls History",
                     color_discrete_sequence=["#0f3460"]
                 )
                 fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
@@ -1499,17 +1496,18 @@ def show_fund_detail(fund):
                 )
                 
             with col2:
-                amount = st.number_input("Cash Amount (Net Call)", min_value=0.0, value=float(ai_data.get("amount", 0)))
-                investments = st.number_input("Investments (Commitment Impact)", min_value=0.0, value=float(ai_data.get("investments", 0)))
+                amount = st.number_input("Amount", min_value=0.0, value=float(ai_data.get("amount", 0)))
+                investments = st.number_input("Investments", min_value=0.0, value=float(ai_data.get("investments", 0)))
                 mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
                 
             with col3:
                 fund_expenses = st.number_input("Fund Expenses", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
                 
+                default_recall = (tx_type == "repayment")
                 is_recallable = st.checkbox(
-                    "Is Recallable / Affects Called", 
-                    value=(tx_type == "repayment"),
-                    help="If checked, this reduces Total Called"
+                    "Reduces Total Called", 
+                    value=default_recall,
+                    help="Check if this amount reduces the Total Called (usually True for Repayment, False for Distribution)"
                 )
                 
                 equalisation_interest = st.number_input(
@@ -2249,6 +2247,223 @@ def show_gantt(tasks, fund):
                         st.error(f"Error: {e}")
                 else:
                     st.error("Please enter a task name")
+
+def show_reports():
+    st.title("📈 Quarterly Reports")
+    funds = get_funds()
+    calls = get_capital_calls()
+    if not funds:
+        st.info("No funds in the system")
+        return
+
+    st.subheader("📊 Portfolio Valuations Summary")
+    all_reports = get_quarterly_reports(None)
+    if all_reports:
+        latest_reports = {}
+        for r in all_reports:
+            fid = r["fund_id"]
+            if fid not in latest_reports:
+                latest_reports[fid] = r
+            else:
+                curr = latest_reports[fid]
+                if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                    latest_reports[fid] = r
+        
+        summary_data = []
+        for f in funds:
+            if f["id"] in latest_reports:
+                rep = latest_reports[f["id"]]
+                sym = "€" if f.get("currency") == "EUR" else "$"
+                
+                fund_nav = rep.get("nav") or 0
+                f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
+                
+                f_dists = get_distributions(f["id"])
+                f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+                octo_called = f_metrics["total_called"]
+                
+                tvpi = float(rep.get('tvpi') or 1.0)
+                octo_value = octo_called * tvpi
+                
+                tvpi_str = f"{tvpi:.2f}x" if rep.get("tvpi") is not None else "—"
+                dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
+                irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
+                
+                summary_data.append({
+                    "Fund Name": f["name"],
+                    "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
+                    "Fund NAV": format_currency(fund_nav, sym),
+                    "Octo NAV": format_currency(octo_value, sym),
+                    "TVPI": tvpi_str,
+                    "DPI": dpi_str,
+                    "IRR": irr_str
+                })
+        if summary_data:
+            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No valuation data available yet.")
+    else:
+        st.info("No reports have been uploaded yet.")
+
+    st.divider()
+    st.markdown("### 🔍 Detailed Fund Reports")
+
+    fund_options = {f["name"]: f["id"] for f in funds}
+    selected_fund_name = st.selectbox("Select Fund", list(fund_options.keys()))
+    fund_id = fund_options[selected_fund_name]
+    reports = get_quarterly_reports(fund_id)
+
+    if reports:
+        col_hdr1, col_hdr2 = st.columns([4, 1])
+        with col_hdr1:
+            st.subheader(f"Reports – {selected_fund_name}")
+        with col_hdr2:
+            df_rep = pd.DataFrame([{"Year": r["year"], "Quarter": f"Q{r['quarter']}", "NAV": r.get("nav"),
+                                    "TVPI": r.get("tvpi"), "DPI": r.get("dpi"), "RVPI": r.get("rvpi"),
+                                    "IRR %": r.get("irr"), "Notes": r.get("notes","")} for r in reports])
+            excel_data = convert_df_to_excel(df_rep)
+            st.download_button("📥 Export to Excel", data=excel_data, file_name=f"Reports_{selected_fund_name}_{date.today()}.xlsx", use_container_width=True)
+            
+        st.dataframe(df_rep, use_container_width=True, hide_index=True)
+
+        st.markdown("#### ⚙️ Manage Reports (Edit / Delete)")
+        for r in reports:
+            with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
+                col1, col_edit, col_del = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"NAV (Fund): {format_currency(float(r.get('nav',0)), '$')} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
+                with col_edit:
+                    if st.button("✏️ Edit", key=f"edit_rep_global_{r['id']}"):
+                        st.session_state[f"editing_rep_g_{r['id']}"] = True
+                with col_del:
+                    if st.button("🗑️ Delete", key=f"del_rep_global_{r['id']}"):
+                        st.session_state[f"confirm_del_rep_g_{r['id']}"] = True
+                        
+                if st.session_state.get(f"confirm_del_rep_g_{r['id']}"):
+                    st.warning("Delete this report?")
+                    rc1, rc2 = st.columns(2)
+                    with rc1:
+                        if st.button("✅ Yes, Delete", key=f"yes_rep_g_{r['id']}"):
+                            try:
+                                log_action("DELETE", "quarterly_reports", f"Deleted report Q{r['quarter']}/{r['year']} of {selected_fund_name}", r)
+                                get_supabase().table("quarterly_reports").delete().eq("id", r["id"]).execute()
+                                st.session_state.pop(f"confirm_del_rep_g_{r['id']}", None)
+                                clear_cache_and_rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    with rc2:
+                        if st.button("❌ Cancel", key=f"no_rep_g_{r['id']}"):
+                            st.session_state.pop(f"confirm_del_rep_g_{r['id']}", None)
+                            st.rerun()
+
+                if st.session_state.get(f"editing_rep_g_{r['id']}"):
+                    with st.form(f"edit_rep_g_form_{r['id']}"):
+                        st.markdown("**✏️ Edit Report Details**")
+                        e_c1, e_c2, e_c3 = st.columns(3)
+                        with e_c1:
+                            edit_year = st.number_input("Year", value=int(r['year']), min_value=2020, max_value=2030)
+                            edit_quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(int(r['quarter'])))
+                            try:
+                                def_rep_date = datetime.fromisoformat(str(r['report_date'])).date() if r.get('report_date') else date.today()
+                            except:
+                                def_rep_date = date.today()
+                            edit_rep_date = st.date_input("Report Date", value=def_rep_date)
+                        with e_c2:
+                            edit_nav = st.number_input("NAV", value=float(r.get('nav') or 0.0), min_value=0.0)
+                            edit_tvpi = st.number_input("TVPI", value=float(r.get('tvpi') or 0.0), step=0.01, format="%.2f")
+                            edit_dpi = st.number_input("DPI", value=float(r.get('dpi') or 0.0), step=0.01, format="%.2f")
+                        with e_c3:
+                            edit_rvpi = st.number_input("RVPI", value=float(r.get('rvpi') or 0.0), step=0.01, format="%.2f")
+                            edit_irr = st.number_input("IRR %", value=float(r.get('irr') or 0.0), step=0.1, format="%.1f")
+                            edit_notes = st.text_area("Notes", value=r.get('notes') or "")
+                        
+                        save_c1, save_c2 = st.columns(2)
+                        with save_c1:
+                            if st.form_submit_button("💾 Save Changes", type="primary"):
+                                try:
+                                    get_supabase().table("quarterly_reports").update({
+                                        "year": edit_year, "quarter": edit_quarter,
+                                        "report_date": str(edit_rep_date), "nav": edit_nav,
+                                        "tvpi": edit_tvpi, "dpi": edit_dpi, "rvpi": edit_rvpi, 
+                                        "irr": edit_irr, "notes": edit_notes
+                                    }).eq("id", r["id"]).execute()
+                                    st.session_state.pop(f"editing_rep_g_{r['id']}", None)
+                                    clear_cache_and_rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+                        with save_c2:
+                            if st.form_submit_button("❌ Close"):
+                                st.session_state.pop(f"editing_rep_g_{r['id']}", None)
+                                st.rerun()
+    else:
+        st.info("No quarterly reports for this fund yet.")
+
+    st.divider()
+    st.markdown("**🤖 Add Quarterly Report from File (AI Extraction)**")
+    uploaded_rep_file = st.file_uploader("Upload Quarterly Report (PDF / Excel / CSV)", type=["pdf", "xlsx", "xls", "csv"], key="global_rep_uploader")
+    
+    if uploaded_rep_file:
+        if st.button("Analyze Document Now", type="primary", key="global_rep_analyze_btn"):
+            with st.spinner("Claude is analyzing the report..."):
+                try:
+                    file_bytes = uploaded_rep_file.read()
+                    file_name = uploaded_rep_file.name
+                    if file_name.lower().endswith('.pdf'):
+                        rep_text = extract_pdf_text(file_bytes)
+                    else:
+                        if file_name.lower().endswith('.csv'):
+                            df = pd.read_csv(io.BytesIO(file_bytes))
+                        else:
+                            df = pd.read_excel(io.BytesIO(file_bytes))
+                        rep_text = df.to_string(index=False)
+                        if len(rep_text) > 12000:
+                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
+                    
+                    ai_result = analyze_quarterly_report_with_ai(rep_text)
+                    st.session_state["global_rep_ai_result"] = ai_result
+                    st.success("✅ Data extracted successfully! Please review and confirm in the form below.")
+                except Exception as e:
+                    st.error(f"Error analyzing document: {e}. (If Excel, ensure openpyxl is in requirements.txt)")
+
+    st.divider()
+    st.markdown("**➕ Or Enter Details Manually**")
+    
+    ai_rep = st.session_state.get("global_rep_ai_result", {})
+    
+    def_year = int(ai_rep.get("year")) if ai_rep.get("year") else 2025
+    def_quarter = int(ai_rep.get("quarter")) if ai_rep.get("quarter") in [1,2,3,4] else 1
+    
+    def_rep_date = date.today()
+    if ai_rep.get("report_date"):
+        try: def_rep_date = datetime.strptime(ai_rep["report_date"], "%Y-%m-%d").date()
+        except: pass
+
+    with st.form("add_report"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            year = st.number_input("Year", value=def_year, min_value=2020, max_value=2030)
+            quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(def_quarter))
+            report_date = st.date_input("Report Date", value=def_rep_date)
+        with col2:
+            nav = st.number_input("NAV (Fund Level)", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
+            tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("tvpi") or 0.0))
+            dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("dpi") or 0.0))
+        with col3:
+            rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("rvpi") or 0.0))
+            irr = st.number_input("IRR %", step=0.1, format="%.1f", value=float(ai_rep.get("irr") or 0.0))
+            notes = st.text_area("Notes")
+        if st.form_submit_button("Save Report", type="primary"):
+            try:
+                get_supabase().table("quarterly_reports").upsert({
+                    "fund_id": fund_id, "year": year, "quarter": quarter,
+                    "report_date": str(report_date), "nav": nav,
+                    "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes
+                }).execute()
+                st.session_state.pop("global_rep_ai_result", None)
+                st.success("✅ Report saved!")
+                clear_cache_and_rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 if __name__ == "__main__":
     main()
