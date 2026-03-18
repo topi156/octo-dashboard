@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4.7 - app.py
-Master Version: True Double-Entry PE Accounting, Reports Crash Fix, RVPI NAV
+OCTO FUND DASHBOARD v9.4.8 - app.py
+Master Version: Decoupled Alerts via Future Call, Direct Net Control
 """
 
 import streamlit as st
@@ -115,22 +115,25 @@ def calculate_fund_metrics(fund, calls, dists):
             
         tx_type = c.get("transaction_type", "call")
         amount = float(c.get("amount") or 0)
+        investments = float(c.get("investments") or 0)
         eq_interest = float(c.get("equalisation_interest") or 0)
         
         affects_called = c.get("affects_called")
         if affects_called is None:
             affects_called = (tx_type == "repayment")
             
+        impact = investments if investments > 0 else amount
+            
         if tx_type == "call":
-            total_called += amount
+            total_called += impact
             total_equalisation_interest += eq_interest
         elif tx_type == "repayment":
             if affects_called:
-                total_called -= amount
+                total_called -= impact
         elif tx_type == "distribution":
             total_dist += amount
             if affects_called:
-                total_called -= amount
+                total_called -= impact
     
     uncalled = commitment - total_called
     
@@ -525,40 +528,24 @@ def check_and_show_alerts():
     funds_dict = {f["id"]: f for f in get_funds()}
     pipe_dict = {f["id"]: f["name"] for f in get_pipeline_funds()}
 
-    upcoming_fund_events = {}
     for cc in get_capital_calls():
+        if not cc.get("is_future"): continue
         if not cc.get("payment_date"): continue
         try:
             deadline = datetime.strptime(str(cc["payment_date"]).split("T")[0], "%Y-%m-%d").date()
-            if deadline >= today:
-                key = (cc["fund_id"], deadline)
-                if key not in upcoming_fund_events:
-                    upcoming_fund_events[key] = {
-                        "fund_name": funds_dict.get(cc["fund_id"], {}).get("name", "Unknown Fund"),
-                        "currency": funds_dict.get(cc["fund_id"], {}).get("currency", "USD"),
-                        "net_wire": 0.0,
-                        "days_left": (deadline - today).days
-                    }
-                
-                tx_type = cc.get("transaction_type", "call")
-                amt = float(cc.get("amount", 0))
-                interest = float(cc.get("equalisation_interest", 0))
-                
-                if tx_type == "call":
-                    upcoming_fund_events[key]["net_wire"] += (amt + interest)
-                else: 
-                    upcoming_fund_events[key]["net_wire"] -= amt
+            days_left = (deadline - today).days
         except: continue
 
-    for key, data in upcoming_fund_events.items():
-        days_left = data["days_left"]
         if days_left in [0, 1, 3, 7, 13, 14]:
-            fname = data["fund_name"]
-            sym = "€" if data["currency"] == "EUR" else "$"
-            amt = format_currency(data["net_wire"], sym)
+            fund_info = funds_dict.get(cc.get("fund_id"), {})
+            fname = fund_info.get("name", "Unknown Fund")
+            curr = "€" if fund_info.get("currency") == "EUR" else "$"
+            
+            total_cash = float(cc.get("amount", 0)) + float(cc.get("equalisation_interest", 0))
+            amt = format_currency(total_cash, curr)
             
             if days_left in [0, 1]:
-                alert_id = f"net_banner_{key[0]}_{key[1]}"
+                alert_id = f"cc_banner_{cc['id']}_{days_left}"
                 if alert_id not in st.session_state.dismissed_banners:
                     c1, c2 = st.columns([15, 1])
                     with c1:
@@ -571,7 +558,7 @@ def check_and_show_alerts():
                             st.session_state.dismissed_banners.add(alert_id)
                             st.rerun()
             else:
-                alert_id = f"net_toast_{key[0]}_{key[1]}_{days_left}"
+                alert_id = f"cc_toast_{cc['id']}_{days_left}"
                 if alert_id not in st.session_state.shown_toasts:
                     st.toast(f"🔔 Upcoming: Capital Call for {fname} in {days_left} days. Wire: {amt}", icon="💸")
                     st.session_state.shown_toasts.add(alert_id)
@@ -680,7 +667,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.7 | Perfect Accounting & Crash Fix")
+        st.caption("Version 9.4.8 | Decoupled Alerts Engine")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -790,16 +777,6 @@ def show_overview():
                 total_nav_usd += ((called * tvpi) - metrics["total_distributed"]) * rate
         else:
             total_nav_usd += called * rate
-        
-        if f["id"] in latest_reports:
-            rvpi = float(latest_reports[f["id"]].get("rvpi") or 0.0)
-            tvpi = float(latest_reports[f["id"]].get("tvpi") or 1.0)
-            if rvpi > 0:
-                total_nav_usd += (called * rvpi) * rate
-            else:
-                total_nav_usd += ((called * tvpi) - metrics["total_distributed"]) * rate
-        else:
-            total_nav_usd += called * rate
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -844,55 +821,22 @@ def show_overview():
 
     with col2:
         st.subheader("🔔 Upcoming Events")
-        today = date.today()
-        upcoming_events = {}
-        
+        future_calls_found = False
         for f in funds:
-            f_calls = [c for c in calls if c["fund_id"] == f["id"]]
-            for c in f_calls:
-                if not c.get("payment_date"): continue
-                try:
-                    p_date = datetime.strptime(str(c.get("payment_date")).split("T")[0], "%Y-%m-%d").date()
-                    if p_date >= today:
-                        key = (f["id"], p_date)
-                        if key not in upcoming_events:
-                            upcoming_events[key] = {
-                                "fund_name": f["name"],
-                                "currency": f.get("currency", "USD"),
-                                "net_wire": 0.0,
-                                "calls_included": []
-                            }
-                        
-                        tx_type = c.get("transaction_type", "call")
-                        amt = float(c.get("amount", 0))
-                        interest = float(c.get("equalisation_interest", 0))
-                        
-                        if tx_type == "call":
-                            upcoming_events[key]["net_wire"] += (amt + interest)
-                        else:
-                            upcoming_events[key]["net_wire"] -= amt
-                            
-                        upcoming_events[key]["calls_included"].append(str(c.get("call_number")))
-                except:
-                    pass
-        
-        if upcoming_events:
-            for key, data in sorted(upcoming_events.items(), key=lambda x: x[0][1]):
-                sym = "€" if data["currency"] == "EUR" else "$"
-                net_wire = data["net_wire"]
-                date_str = key[1].strftime("%Y-%m-%d")
-                calls_str = ", ".join(data["calls_included"])
+            future = [c for c in calls if c["fund_id"] == f["id"] and c.get("is_future")]
+            for c in future:
+                future_calls_found = True
+                total_cash = float(c.get("amount", 0)) + float(c.get("equalisation_interest", 0))
                 
                 st.markdown(f"""
                 <div style="background:#1a3a1a;border-radius:8px;padding:12px;margin-bottom:8px;border-left:4px solid #4ade80;">
-                    <small style="color:#4ade80">Payment Due: {date_str}</small><br>
-                    <strong>{data['fund_name']}</strong><br>
-                    <span style="color:#94a3b8">Included items: {calls_str}</span><br>
-                    <span style="font-size:16px; font-weight:bold; color:white;">Net Wire: {format_currency(net_wire, sym)}</span>
+                    <small style="color:#4ade80">Target Date: {c.get('payment_date','')}</small><br>
+                    <strong>{f['name']}</strong><br>
+                    <span style="color:#94a3b8">Call #{c.get('call_number')} | Wire Amount: {format_currency(total_cash, '$')}</span>
                 </div>
                 """, unsafe_allow_html=True)
-        else:
-            st.info("💡 No upcoming capital calls (based on Payment Date).")
+        if not future_calls_found:
+            st.info("💡 Add future Capital Calls (check the 'Future Call' box) to see forecasts here")
 
     st.divider()
     st.subheader("📊 FOF Collection Summary")
@@ -1490,13 +1434,13 @@ def show_fund_detail(fund):
                                 st.session_state.pop(f"confirm_del_call_{c['id']}", None)
                                 st.rerun()
 
-            chart_data = [c for c in calls if not c.get("is_future") and c.get("transaction_type") == "call" and c.get("amount")]
+            chart_data = [c for c in calls if not c.get("is_future") and c.get("transaction_type") == "call" and (c.get("amount") or c.get("investments"))]
             if chart_data:
                 fig = px.bar(
                     x=[f"Call #{c['call_number']}" for c in chart_data],
-                    y=[float(c.get("amount",0)) for c in chart_data],
-                    labels={"x": "Call", "y": f"Amount ({fund.get('currency','USD')})"},
-                    title="Capital Calls History",
+                    y=[float(c.get("investments") if float(c.get("investments",0)) > 0 else c.get("amount",0)) for c in chart_data],
+                    labels={"x": "Call", "y": f"Commitment Impact ({fund.get('currency','USD')})"},
+                    title="Capital Calls History (Commitment Usage)",
                     color_discrete_sequence=["#0f3460"]
                 )
                 fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
@@ -1552,8 +1496,8 @@ def show_fund_detail(fund):
                 )
                 
             with col2:
-                amount = st.number_input("Amount", min_value=0.0, value=float(ai_data.get("amount", 0)))
-                investments = st.number_input("Investments", min_value=0.0, value=float(ai_data.get("investments", 0)))
+                amount = st.number_input("Cash Amount (Net Call)", min_value=0.0, value=float(ai_data.get("amount", 0)))
+                investments = st.number_input("Investments (Commitment Impact)", min_value=0.0, value=float(ai_data.get("investments", 0)))
                 mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
                 
             with col3:
@@ -1573,7 +1517,7 @@ def show_fund_detail(fund):
                     help="Interest paid by late entrants - does NOT count toward Total Called"
                 )
                 
-                is_future = st.checkbox("Future Call")
+                is_future = st.checkbox("Future Call (Show Alert)")
                 notes = st.text_input("Notes")
                 
             if st.form_submit_button("Save Call to System", type="primary"):
@@ -2303,9 +2247,6 @@ def show_gantt(tasks, fund):
                         st.error(f"Error: {e}")
                 else:
                     st.error("Please enter a task name")
-    def show_reports():
-        st.title("📈 Reports & Analytics")
-        st.info("📊 Reports page - Coming soon! This will include portfolio analytics, performance tracking, and custom report generation.")
 
 if __name__ == "__main__":
     main()
