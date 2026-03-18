@@ -2304,7 +2304,8 @@ def show_gantt(tasks, fund):
                 else:
                     st.error("Please enter a task name")
     def show_reports():
-    st.title("📈 Reports & Analytics")
-    st.info("📊 Reports page - Coming soon! This will include portfolio analytics, performance tracking, and custom report generation.")
+        st.title("📈 Reports & Analytics")
+        st.info("📊 Reports page - Coming soon! This will include portfolio analytics, performance tracking, and custom report generation.")
+
 if __name__ == "__main__":
     main()
