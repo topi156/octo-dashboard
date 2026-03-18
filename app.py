@@ -15,7 +15,27 @@ from datetime import datetime, date, timedelta
 from supabase import create_client, Client
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
-
+st.markdown("""
+<style>
+    /* תיקון: הקטנת פונטים של Metrics */
+    [data-testid="metric-container"] [data-testid="stMetricValue"] { 
+        font-size: 1.5rem !important;
+        line-height: 1.3 !important;
+        white-space: nowrap !important;
+    }
+    
+    /* תיקון: מניעת חיתוך מספרים */
+    [data-testid="stMetricValue"] {
+        overflow: visible !important;
+        text-overflow: clip !important;
+    }
+    
+    /* תיקון: הקטנת padding */
+    [data-testid="metric-container"] {
+        padding: 10px 14px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
         return "—"
