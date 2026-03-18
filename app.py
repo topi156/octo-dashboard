@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4 - app.py
-Master Version: Dynamic FX Rate Persistence, Octo True Invested Base, M-formatting
+OCTO FUND DASHBOARD v9.4.1 - app.py
+Master Version: Dynamic FX Rate Persistence, Octo True Invested Base, M-formatting, UI Fixes
 """
 
 import streamlit as st
@@ -123,13 +123,18 @@ def calculate_fund_metrics(fund, calls, dists):
         amount = float(c.get("amount") or 0)
         eq_interest = float(c.get("equalisation_interest") or 0)
         
+        # פתרון לבעיית ה-null מהדאטהבייס שהפך ל-None
+        affects_called = c.get("affects_called")
+        if affects_called is None:
+            affects_called = True
+            
         if tx_type == "call":
             total_called += amount
             total_equalisation_interest += eq_interest  # Track but don't add to called
-        elif tx_type == "repayment" and c.get("affects_called", True):
+        elif tx_type == "repayment" and affects_called:
             # Recallable repayment reduces called
             total_called -= amount
-        elif tx_type == "distribution" and c.get("affects_called", True):
+        elif tx_type == "distribution" and affects_called:
             # Non-recallable distribution also reduces called for commitment accounting
             total_called -= amount
     
@@ -298,10 +303,17 @@ st.markdown("""
     [data-testid="metric-container"] label, [data-testid="metric-container"] div { 
         color: #94a3b8 !important; font-size: 13px !important;
     }
+    /* תיקון: הקטנת פונטים של Metrics */
     [data-testid="metric-container"] [data-testid="stMetricValue"] { 
+        font-size: 0.95rem !important; /* הקטן מ-1.1rem */
+    }
+    
+    /* תיקון: הצגת מספרים מלאים */
+    [data-testid="stMetricValue"] {
         color: #ffffff !important; font-weight: 700 !important; 
-        font-size: 1.1rem !important; /* פונט מוקטן למספרים ארוכים */
-        word-break: break-word !important; white-space: pre-wrap !important; line-height: 1.2 !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        line-height: 1.2 !important;
     }
 
     [data-testid="stSidebar"] { background: #0f1117 !important; }
@@ -673,7 +685,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4 | Master Full Release")
+        st.caption("Version 9.4.1 | Master Full Release")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -782,12 +794,6 @@ def show_overview():
             tvpi = float(latest_reports[f["id"]]["tvpi"])
             
         total_nav_usd += (called * tvpi) * rate
-        
-        tvpi = 1.0
-        if f["id"] in latest_reports and latest_reports[f["id"]].get("tvpi"):
-            tvpi = float(latest_reports[f["id"]]["tvpi"])
-            
-        total_nav_usd += (called * tvpi) * rate
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -808,7 +814,11 @@ def show_overview():
             rows = []
             for f in funds:
                 f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-                total_called = sum(float(c.get("amount") or 0) for c in f_calls)
+                
+                # Update: Use calculate_fund_metrics to get correct total called
+                f_dists = get_distributions(f["id"])
+                f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+                total_called = f_metrics["total_called"]
                 
                 c_val = float(f.get("commitment") or 0)
                 if 0 < c_val <= 1000:
@@ -896,7 +906,10 @@ def show_overview():
                 fund_nav = rep.get("nav") or 0
                 
                 f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-                octo_called = sum(float(c.get("amount") or 0) for c in f_calls)
+                f_dists = get_distributions(f["id"])
+                octo_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+                octo_called = octo_metrics["total_called"]
+                
                 tvpi = float(rep.get('tvpi') or 1.0)
                 octo_nav = octo_called * tvpi
                 
@@ -1389,7 +1402,9 @@ def show_fund_detail(fund):
                     "distribution": "📤"
                 }
                 tx_type = c.get("transaction_type", "call")
-                icon = tx_icons.get(tx_type, "💰")
+                
+                # תיקון #2 - האייקון הנכון ל-Future Call
+                icon = "🔮" if c.get("is_future") else tx_icons.get(tx_type, "💰")
                 
                 with st.expander(
                     f"{icon} Call #{c.get('call_number')} | {c.get('payment_date','')} | "
@@ -2280,7 +2295,12 @@ def show_reports():
                 
                 fund_nav = rep.get("nav") or 0
                 f_calls = [c for c in calls if c["fund_id"] == f["id"] and not c.get("is_future")]
-                octo_called = sum(float(c.get("amount") or 0) for c in f_calls)
+                
+                # תוקן כדי להשתמש בחישוב המדויק ל-Total Called
+                f_dists = get_distributions(f["id"])
+                f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+                octo_called = f_metrics["total_called"]
+                
                 tvpi = float(rep.get('tvpi') or 1.0)
                 octo_value = octo_called * tvpi
                 
