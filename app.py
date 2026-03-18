@@ -100,6 +100,51 @@ FUND PRESENTATION TEXT:
         if content.startswith("json"):
             content = content[4:]
     return json.loads(content.strip())
+def calculate_fund_metrics(fund, calls, dists):
+    """
+    חישוב נכון של Total Called ו-Distributions
+    
+    Total Called = Capital Calls - Recallable Repayments - Non-recallable Distributions (that affect commitment)
+    """
+    commitment = float(fund.get("commitment") or 0)
+    if 0 < commitment <= 1000:
+        commitment *= 1_000_000
+    
+    # Total Called calculation
+    total_called = 0
+    total_equalisation_interest = 0
+    
+    for c in calls:
+        if c.get("is_future"):
+            continue
+            
+        tx_type = c.get("transaction_type", "call")
+        amount = float(c.get("amount") or 0)
+        eq_interest = float(c.get("equalisation_interest") or 0)
+        
+        if tx_type == "call":
+            total_called += amount
+            total_equalisation_interest += eq_interest  # Track but don't add to called
+        elif tx_type == "repayment" and c.get("affects_called", True):
+            # Recallable repayment reduces called
+            total_called -= amount
+        elif tx_type == "distribution" and c.get("affects_called", True):
+            # Non-recallable distribution also reduces called for commitment accounting
+            total_called -= amount
+    
+    # Total Distributions (from distributions table)
+    total_dist = sum(float(d.get("amount") or 0) for d in dists)
+    
+    # Uncalled
+    uncalled = commitment - total_called
+    
+    return {
+        "commitment": commitment,
+        "total_called": total_called,
+        "total_distributed": total_dist,
+        "uncalled": uncalled,
+        "equalisation_interest": total_equalisation_interest
+    }
 
 def analyze_capital_call_pdf_with_ai(pdf_bytes: bytes) -> dict:
     pdf_text = extract_pdf_text(pdf_bytes)
