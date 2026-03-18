@@ -100,6 +100,7 @@ FUND PRESENTATION TEXT:
         if content.startswith("json"):
             content = content[4:]
     return json.loads(content.strip())
+
 def calculate_fund_metrics(fund, calls, dists):
     """
     חישוב נכון של Total Called ו-Distributions
@@ -1281,6 +1282,7 @@ def show_fund_detail(fund):
     total_called = metrics["total_called"]
     total_dist = metrics["total_distributed"]
     uncalled = metrics["uncalled"]
+    currency_sym = "€" if fund.get("currency") == "EUR" else "$"
 
     col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
     with col1:
@@ -1377,57 +1379,45 @@ def show_fund_detail(fund):
     tab1, tab2, tab3 = st.tabs(["📞 Capital Calls", "💰 Distributions", "📊 Performance"])
 
     with tab1:
-    if calls:
-        st.markdown("**Capital Calls List**")
-        for c in calls:
-            # NEW: Get transaction type icon
-            tx_icons = {
-                "call": "💰",
-                "repayment": "🔄",
-                "distribution": "📤"
-            }
-            tx_type = c.get("transaction_type", "call")
-            icon = tx_icons.get(tx_type, "💰")
-            
-            with st.expander(
-                f"{icon} Call #{c.get('call_number')} | {c.get('payment_date','')} | "
-                f"{format_currency(float(c.get('amount',0)), currency_sym)} "
-                f"{'🔮' if c.get('is_future') else '✅'}", 
-                expanded=False
-            ):
-                col1, col2, col3 = st.columns([2,2,1])
-                with col1:
-                    st.write(f"**Type:** {tx_type.capitalize()}")  # NEW LINE
-                    st.write(f"Call Date: {c.get('call_date','')}")
-                    st.write(f"Payment Date: {c.get('payment_date','')}")
-                    st.write(f"Amount: {format_currency(float(c.get('amount',0)), currency_sym)}")
-                with col2:
-                    st.write(f"Investments: {format_currency(float(c.get('investments',0)), currency_sym)}" if c.get('investments') else "Investments: —")
-                    st.write(f"Mgmt Fee: {format_currency(float(c.get('mgmt_fee',0)), currency_sym)}" if c.get('mgmt_fee') else "Mgmt Fee: —")
-                    
-                    # NEW: Show equalisation interest if exists
-                    eq_interest = float(c.get('equalisation_interest', 0))
-                    if eq_interest > 0:
-                        st.write(f"⚠️ Equalisation Interest: {format_currency(eq_interest, currency_sym)} (outside commitment)")
-                    
-                    if c.get('notes'):
-                        st.write(f"Notes: {c.get('notes')}")
-                with col3:
-                    if st.button("🗑️", key=f"del_call_{c['id']}", help="Delete Call"):
-                        st.session_state[f"confirm_del_call_{c['id']}"] = True
+        if calls:
+            st.markdown("**Capital Calls List**")
+            for c in calls:
+                # NEW: Get transaction type icon
+                tx_icons = {
+                    "call": "💰",
+                    "repayment": "🔄",
+                    "distribution": "📤"
+                }
+                tx_type = c.get("transaction_type", "call")
+                icon = tx_icons.get(tx_type, "💰")
+                
+                with st.expander(
+                    f"{icon} Call #{c.get('call_number')} | {c.get('payment_date','')} | "
+                    f"{format_currency(float(c.get('amount',0)), currency_sym)} "
+                    f"{'🔮' if c.get('is_future') else '✅'}", 
+                    expanded=False
+                ):
                     col1, col2, col3 = st.columns([2,2,1])
                     with col1:
+                        st.write(f"**Type:** {tx_type.capitalize()}")  # NEW LINE
                         st.write(f"Call Date: {c.get('call_date','')}")
                         st.write(f"Payment Date: {c.get('payment_date','')}")
                         st.write(f"Amount: {format_currency(float(c.get('amount',0)), currency_sym)}")
                     with col2:
                         st.write(f"Investments: {format_currency(float(c.get('investments',0)), currency_sym)}" if c.get('investments') else "Investments: —")
                         st.write(f"Mgmt Fee: {format_currency(float(c.get('mgmt_fee',0)), currency_sym)}" if c.get('mgmt_fee') else "Mgmt Fee: —")
+                        
+                        # NEW: Show equalisation interest if exists
+                        eq_interest = float(c.get('equalisation_interest', 0))
+                        if eq_interest > 0:
+                            st.write(f"⚠️ Equalisation Interest: {format_currency(eq_interest, currency_sym)} (outside commitment)")
+                        
                         if c.get('notes'):
                             st.write(f"Notes: {c.get('notes')}")
                     with col3:
                         if st.button("🗑️", key=f"del_call_{c['id']}", help="Delete Call"):
                             st.session_state[f"confirm_del_call_{c['id']}"] = True
+                        
                     if st.session_state.get(f"confirm_del_call_{c['id']}"):
                         st.warning("Delete this Call?")
                         cc1, cc2 = st.columns(2)
@@ -1444,7 +1434,6 @@ def show_fund_detail(fund):
                                 st.session_state.pop(f"confirm_del_call_{c['id']}", None)
                                 st.rerun()
 
-            import plotly.express as px
             chart_data = [c for c in calls if not c.get("is_future") and c.get("amount")]
             if chart_data:
                 fig = px.bar(
@@ -1490,69 +1479,68 @@ def show_fund_detail(fund):
             except: pass
 
         with st.form(f"add_call_{fund['id']}"):
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        call_num = st.number_input("Call Number", min_value=1, value=len(calls)+1)
-        call_date = st.date_input("Call Date", value=def_call_date)
-        payment_date = st.date_input("Payment Date", value=def_pay_date)
-        
-        # NEW: Transaction Type Selector
-        tx_type = st.selectbox(
-            "Transaction Type",
-            ["call", "repayment", "distribution"],
-            format_func=lambda x: {
-                "call": "💰 Capital Call",
-                "repayment": "🔄 Capital Repayment (Recallable)",
-                "distribution": "📤 Capital Distribution (Non-recallable)"
-            }[x]
-        )
-        
-    with col2:
-        amount = st.number_input("Total Amount", min_value=0.0, value=float(ai_data.get("amount", 0)))
-        investments = st.number_input("Investments (Capital Commitment)", min_value=0.0, value=float(ai_data.get("investments", 0)))
-        mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
-        
-    with col3:
-        fund_expenses = st.number_input("Fund Expenses", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
-        
-        # NEW: Recallable checkbox
-        is_recallable = st.checkbox(
-            "Is Recallable", 
-            value=(tx_type == "repayment"),
-            help="Check if this amount can be called again in the future"
-        )
-        
-        # NEW: Equalisation Interest
-        equalisation_interest = st.number_input(
-            "Equalisation Interest (outside commitment)", 
-            min_value=0.0, 
-            value=0.0,
-            help="Interest paid by late entrants - does NOT count toward Total Called"
-        )
-        
-        is_future = st.checkbox("Future Call")
-        notes = st.text_input("Notes")
-```
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                call_num = st.number_input("Call Number", min_value=1, value=len(calls)+1)
+                call_date = st.date_input("Call Date", value=def_call_date)
+                payment_date = st.date_input("Payment Date", value=def_pay_date)
+                
+                # NEW: Transaction Type Selector
+                tx_type = st.selectbox(
+                    "Transaction Type",
+                    ["call", "repayment", "distribution"],
+                    format_func=lambda x: {
+                        "call": "💰 Capital Call",
+                        "repayment": "🔄 Capital Repayment (Recallable)",
+                        "distribution": "📤 Capital Distribution (Non-recallable)"
+                    }[x]
+                )
+                
+            with col2:
+                amount = st.number_input("Total Amount", min_value=0.0, value=float(ai_data.get("amount", 0)))
+                investments = st.number_input("Investments (Capital Commitment)", min_value=0.0, value=float(ai_data.get("investments", 0)))
+                mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
+                
+            with col3:
+                fund_expenses = st.number_input("Fund Expenses", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
+                
+                # NEW: Recallable checkbox
+                is_recallable = st.checkbox(
+                    "Is Recallable", 
+                    value=(tx_type == "repayment"),
+                    help="Check if this amount can be called again in the future"
+                )
+                
+                # NEW: Equalisation Interest
+                equalisation_interest = st.number_input(
+                    "Equalisation Interest (outside commitment)", 
+                    min_value=0.0, 
+                    value=0.0,
+                    help="Interest paid by late entrants - does NOT count toward Total Called"
+                )
+                
+                is_future = st.checkbox("Future Call")
+                notes = st.text_input("Notes")
                 
             if st.form_submit_button("Save Call to System", type="primary"):
-    try:
-        get_supabase().table("capital_calls").insert({
-            "fund_id": fund["id"], 
-            "call_number": call_num,
-            "call_date": str(call_date), 
-            "payment_date": str(payment_date),
-            "transaction_type": tx_type,  # NEW
-            "amount": amount, 
-            "investments": investments,
-            "mgmt_fee": mgmt_fee, 
-            "fund_expenses": fund_expenses,
-            "is_recallable": is_recallable,  # NEW
-            "affects_called": True,  # NEW - always true for now
-            "equalisation_interest": equalisation_interest,  # NEW
-            "is_future": is_future, 
-            "notes": notes
-        }).execute()
-                    
+                try:
+                    get_supabase().table("capital_calls").insert({
+                        "fund_id": fund["id"], 
+                        "call_number": call_num,
+                        "call_date": str(call_date), 
+                        "payment_date": str(payment_date),
+                        "transaction_type": tx_type,  # NEW
+                        "amount": amount, 
+                        "investments": investments,
+                        "mgmt_fee": mgmt_fee, 
+                        "fund_expenses": fund_expenses,
+                        "is_recallable": is_recallable,  # NEW
+                        "affects_called": True,  # NEW - always true for now
+                        "equalisation_interest": equalisation_interest,  # NEW
+                        "is_future": is_future, 
+                        "notes": notes
+                    }).execute()
+                                
                     st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
                     st.success("✅ Saved!")
                     clear_cache_and_rerun()
@@ -1684,7 +1672,6 @@ def show_fund_detail(fund):
                                     st.session_state.pop(f"editing_rep_{r['id']}", None)
                                     st.rerun()
 
-            import plotly.graph_objects as go
             if len(reports) > 1:
                 labels = [f"Q{r['quarter']}/{r['year']}" for r in reports]
                 fig = go.Figure()
