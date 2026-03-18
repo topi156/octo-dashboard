@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4.5 - app.py
-Master Version: True Double-Entry PE Accounting, Net Wire Aggregation, RVPI NAV
+OCTO FUND DASHBOARD v9.4.6 - app.py
+Master Version: Hold-at-cost for NAV, Fix Reports Crash, True PE Accounting
 """
 
 import streamlit as st
@@ -110,7 +110,6 @@ def calculate_fund_metrics(fund, calls, dists):
     total_dist = sum(float(d.get("amount") or 0) for d in dists)
     
     for c in calls:
-        # בוטל התנאי שדילג על is_future כדי שהחשבונאות לא תיעלם בזמן העבודה
         tx_type = c.get("transaction_type", "call")
         amount = float(c.get("amount") or 0)
         eq_interest = float(c.get("equalisation_interest") or 0)
@@ -678,7 +677,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.5 | Perfect Double-Entry")
+        st.caption("Version 9.4.6 | Hold-at-cost NAV Fix")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -786,6 +785,9 @@ def show_overview():
                 total_nav_usd += (called * rvpi) * rate
             else:
                 total_nav_usd += ((called * tvpi) - metrics["total_distributed"]) * rate
+        else:
+            # הוספת קרן שאין לה דוח לחישוב ה-NAV לפי עלות (Hold at Cost)
+            total_nav_usd += called * rate
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
