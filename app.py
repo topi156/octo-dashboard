@@ -789,6 +789,16 @@ def show_overview():
             else:
                 total_nav_usd += ((called * tvpi) - metrics["total_distributed"]) * rate
         else:
+        total_nav_usd += called * rate
+        
+        if f["id"] in latest_reports:
+            rvpi = float(latest_reports[f["id"]].get("rvpi") or 0.0)
+            tvpi = float(latest_reports[f["id"]].get("tvpi") or 1.0)
+            if rvpi > 0:
+                total_nav_usd += (called * rvpi) * rate
+            else:
+                total_nav_usd += ((called * tvpi) - metrics["total_distributed"]) * rate
+        else:
             total_nav_usd += called * rate
 
     col1, col2, col3, col4 = st.columns(4)
