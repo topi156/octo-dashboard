@@ -1368,10 +1368,44 @@ def show_fund_detail(fund):
     tab1, tab2, tab3 = st.tabs(["📞 Capital Calls", "💰 Distributions", "📊 Performance"])
 
     with tab1:
-        if calls:
-            st.markdown("**Capital Calls List**")
-            for c in calls:
-                with st.expander(f"Call #{c.get('call_number')} | {c.get('payment_date','')} | {format_currency(float(c.get('amount',0)), currency_sym)} {'🔮' if c.get('is_future') else '✅'}", expanded=False):
+    if calls:
+        st.markdown("**Capital Calls List**")
+        for c in calls:
+            # NEW: Get transaction type icon
+            tx_icons = {
+                "call": "💰",
+                "repayment": "🔄",
+                "distribution": "📤"
+            }
+            tx_type = c.get("transaction_type", "call")
+            icon = tx_icons.get(tx_type, "💰")
+            
+            with st.expander(
+                f"{icon} Call #{c.get('call_number')} | {c.get('payment_date','')} | "
+                f"{format_currency(float(c.get('amount',0)), currency_sym)} "
+                f"{'🔮' if c.get('is_future') else '✅'}", 
+                expanded=False
+            ):
+                col1, col2, col3 = st.columns([2,2,1])
+                with col1:
+                    st.write(f"**Type:** {tx_type.capitalize()}")  # NEW LINE
+                    st.write(f"Call Date: {c.get('call_date','')}")
+                    st.write(f"Payment Date: {c.get('payment_date','')}")
+                    st.write(f"Amount: {format_currency(float(c.get('amount',0)), currency_sym)}")
+                with col2:
+                    st.write(f"Investments: {format_currency(float(c.get('investments',0)), currency_sym)}" if c.get('investments') else "Investments: —")
+                    st.write(f"Mgmt Fee: {format_currency(float(c.get('mgmt_fee',0)), currency_sym)}" if c.get('mgmt_fee') else "Mgmt Fee: —")
+                    
+                    # NEW: Show equalisation interest if exists
+                    eq_interest = float(c.get('equalisation_interest', 0))
+                    if eq_interest > 0:
+                        st.write(f"⚠️ Equalisation Interest: {format_currency(eq_interest, currency_sym)} (outside commitment)")
+                    
+                    if c.get('notes'):
+                        st.write(f"Notes: {c.get('notes')}")
+                with col3:
+                    if st.button("🗑️", key=f"del_call_{c['id']}", help="Delete Call"):
+                        st.session_state[f"confirm_del_call_{c['id']}"] = True
                     col1, col2, col3 = st.columns([2,2,1])
                     with col1:
                         st.write(f"Call Date: {c.get('call_date','')}")
