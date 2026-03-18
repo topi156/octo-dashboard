@@ -1555,7 +1555,7 @@ def show_fund_detail(fund):
                         "mgmt_fee": mgmt_fee, 
                         "fund_expenses": fund_expenses,
                         "is_recallable": is_recallable,  # NEW
-                        "affects_called": True,  # NEW - always true for now
+                        "affects_called": affects_called,  # NEW - user can now control this
                         "equalisation_interest": equalisation_interest,  # NEW
                         "is_future": is_future, 
                         "notes": notes
