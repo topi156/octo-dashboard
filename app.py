@@ -1570,14 +1570,14 @@ def show_fund_detail(fund):
                         "call_number": call_num,
                         "call_date": str(call_date), 
                         "payment_date": str(payment_date),
-                        "transaction_type": tx_type,  # NEW
+                        "transaction_type": tx_type,
                         "amount": amount, 
                         "investments": investments,
                         "mgmt_fee": mgmt_fee, 
                         "fund_expenses": fund_expenses,
-                        "is_recallable": is_recallable,  # NEW
-                        "affects_called": affects_called,  # NEW - user can now control this
-                        "equalisation_interest": equalisation_interest,  # NEW
+                        "is_recallable": is_recallable,
+                        "affects_called": True,  # ← תמיד True!
+                        "equalisation_interest": equalisation_interest,
                         "is_future": is_future, 
                         "notes": notes
                     }).execute()
