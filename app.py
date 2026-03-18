@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4.4 - app.py
-Master Version: Smart Aggregated Upcoming Events (Net Wire Calculation)
+OCTO FUND DASHBOARD v9.4.5 - app.py
+Master Version: True Double-Entry PE Accounting, Net Wire Aggregation, RVPI NAV
 """
 
 import streamlit as st
@@ -110,9 +110,7 @@ def calculate_fund_metrics(fund, calls, dists):
     total_dist = sum(float(d.get("amount") or 0) for d in dists)
     
     for c in calls:
-        if c.get("is_future"):
-            continue
-            
+        # בוטל התנאי שדילג על is_future כדי שהחשבונאות לא תיעלם בזמן העבודה
         tx_type = c.get("transaction_type", "call")
         amount = float(c.get("amount") or 0)
         eq_interest = float(c.get("equalisation_interest") or 0)
@@ -525,7 +523,6 @@ def check_and_show_alerts():
     funds_dict = {f["id"]: f for f in get_funds()}
     pipe_dict = {f["id"]: f["name"] for f in get_pipeline_funds()}
 
-    # Aggragating calls by fund and payment date to show ONE alert per date
     upcoming_fund_events = {}
     for cc in get_capital_calls():
         if not cc.get("payment_date"): continue
@@ -547,13 +544,13 @@ def check_and_show_alerts():
                 
                 if tx_type == "call":
                     upcoming_fund_events[key]["net_wire"] += (amt + interest)
-                else: # repayment or distribution
+                else: 
                     upcoming_fund_events[key]["net_wire"] -= amt
         except: continue
 
     for key, data in upcoming_fund_events.items():
         days_left = data["days_left"]
-        if days_left in [0, 1, 3, 7, 13, 14]: # Added 13/14 so alerts show up immediately for March 31
+        if days_left in [0, 1, 3, 7, 13, 14]:
             fname = data["fund_name"]
             sym = "€" if data["currency"] == "EUR" else "$"
             amt = format_currency(data["net_wire"], sym)
@@ -681,7 +678,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.4 | Aggregated Events Engine")
+        st.caption("Version 9.4.5 | Perfect Double-Entry")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -836,7 +833,6 @@ def show_overview():
         today = date.today()
         upcoming_events = {}
         
-        # New Smart Aggregation Logic for Upcoming Events
         for f in funds:
             f_calls = [c for c in calls if c["fund_id"] == f["id"]]
             for c in f_calls:
