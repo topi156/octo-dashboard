@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4.8 - app.py
-Master Version: Decoupled Alerts via Future Call, Direct Net Control
+OCTO FUND DASHBOARD v9.4.9 - app.py
+Master Version: Payment-Date Driven Alerts (No Future Call Checkbox Needed)
 """
 
 import streamlit as st
@@ -528,24 +528,40 @@ def check_and_show_alerts():
     funds_dict = {f["id"]: f for f in get_funds()}
     pipe_dict = {f["id"]: f["name"] for f in get_pipeline_funds()}
 
+    upcoming_fund_events = {}
     for cc in get_capital_calls():
-        if not cc.get("is_future"): continue
         if not cc.get("payment_date"): continue
         try:
             deadline = datetime.strptime(str(cc["payment_date"]).split("T")[0], "%Y-%m-%d").date()
-            days_left = (deadline - today).days
+            if deadline >= today:
+                key = (cc["fund_id"], deadline)
+                if key not in upcoming_fund_events:
+                    upcoming_fund_events[key] = {
+                        "fund_name": funds_dict.get(cc["fund_id"], {}).get("name", "Unknown Fund"),
+                        "currency": funds_dict.get(cc["fund_id"], {}).get("currency", "USD"),
+                        "net_wire": 0.0,
+                        "days_left": (deadline - today).days
+                    }
+                
+                tx_type = cc.get("transaction_type", "call")
+                amt = float(cc.get("amount", 0))
+                interest = float(cc.get("equalisation_interest", 0))
+                
+                if tx_type == "call":
+                    upcoming_fund_events[key]["net_wire"] += (amt + interest)
+                else: 
+                    upcoming_fund_events[key]["net_wire"] -= amt
         except: continue
 
-        if days_left in [0, 1, 3, 7, 13, 14]:
-            fund_info = funds_dict.get(cc.get("fund_id"), {})
-            fname = fund_info.get("name", "Unknown Fund")
-            curr = "€" if fund_info.get("currency") == "EUR" else "$"
-            
-            total_cash = float(cc.get("amount", 0)) + float(cc.get("equalisation_interest", 0))
-            amt = format_currency(total_cash, curr)
+    for key, data in upcoming_fund_events.items():
+        days_left = data["days_left"]
+        if 0 <= days_left <= 14:
+            fname = data["fund_name"]
+            sym = "€" if data["currency"] == "EUR" else "$"
+            amt = format_currency(data["net_wire"], sym)
             
             if days_left in [0, 1]:
-                alert_id = f"cc_banner_{cc['id']}_{days_left}"
+                alert_id = f"net_banner_{key[0]}_{key[1]}"
                 if alert_id not in st.session_state.dismissed_banners:
                     c1, c2 = st.columns([15, 1])
                     with c1:
@@ -558,7 +574,7 @@ def check_and_show_alerts():
                             st.session_state.dismissed_banners.add(alert_id)
                             st.rerun()
             else:
-                alert_id = f"cc_toast_{cc['id']}_{days_left}"
+                alert_id = f"net_toast_{key[0]}_{key[1]}_{days_left}"
                 if alert_id not in st.session_state.shown_toasts:
                     st.toast(f"🔔 Upcoming: Capital Call for {fname} in {days_left} days. Wire: {amt}", icon="💸")
                     st.session_state.shown_toasts.add(alert_id)
@@ -570,7 +586,7 @@ def check_and_show_alerts():
             days_left = (deadline - today).days
         except: continue
 
-        if days_left in [0, 1, 3, 7]:
+        if 0 <= days_left <= 14:
             if days_left in [0, 1]:
                 alert_id = f"lpc_banner_{lpc['id']}_{days_left}"
                 if alert_id not in st.session_state.dismissed_banners:
@@ -599,7 +615,7 @@ def check_and_show_alerts():
             days_left = (deadline - today).days
         except: continue
 
-        if days_left in [0, 1, 3, 7]:
+        if 0 <= days_left <= 14:
             alert_id = f"gantt_toast_{t['id']}_{days_left}"
             if alert_id not in st.session_state.shown_toasts:
                 p_name = pipe_dict.get(t.get("pipeline_fund_id"), "Pipeline Fund")
@@ -667,7 +683,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.8 | Decoupled Alerts Engine")
+        st.caption("Version 9.4.9 | Intelligent Payment Alerts")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -821,22 +837,55 @@ def show_overview():
 
     with col2:
         st.subheader("🔔 Upcoming Events")
-        future_calls_found = False
+        today = date.today()
+        upcoming_events = {}
+        
         for f in funds:
-            future = [c for c in calls if c["fund_id"] == f["id"] and c.get("is_future")]
-            for c in future:
-                future_calls_found = True
-                total_cash = float(c.get("amount", 0)) + float(c.get("equalisation_interest", 0))
+            f_calls = [c for c in calls if c["fund_id"] == f["id"]]
+            for c in f_calls:
+                if not c.get("payment_date"): continue
+                try:
+                    p_date = datetime.strptime(str(c.get("payment_date")).split("T")[0], "%Y-%m-%d").date()
+                    if p_date >= today:
+                        key = (f["id"], p_date)
+                        if key not in upcoming_events:
+                            upcoming_events[key] = {
+                                "fund_name": f["name"],
+                                "currency": f.get("currency", "USD"),
+                                "net_wire": 0.0,
+                                "calls_included": []
+                            }
+                        
+                        tx_type = c.get("transaction_type", "call")
+                        amt = float(c.get("amount", 0))
+                        interest = float(c.get("equalisation_interest", 0))
+                        
+                        if tx_type == "call":
+                            upcoming_events[key]["net_wire"] += (amt + interest)
+                        else:
+                            upcoming_events[key]["net_wire"] -= amt
+                            
+                        upcoming_events[key]["calls_included"].append(str(c.get("call_number")))
+                except:
+                    pass
+        
+        if upcoming_events:
+            for key, data in sorted(upcoming_events.items(), key=lambda x: x[0][1]):
+                sym = "€" if data["currency"] == "EUR" else "$"
+                net_wire = data["net_wire"]
+                date_str = key[1].strftime("%Y-%m-%d")
+                calls_str = ", ".join(data["calls_included"])
                 
                 st.markdown(f"""
                 <div style="background:#1a3a1a;border-radius:8px;padding:12px;margin-bottom:8px;border-left:4px solid #4ade80;">
-                    <small style="color:#4ade80">Target Date: {c.get('payment_date','')}</small><br>
-                    <strong>{f['name']}</strong><br>
-                    <span style="color:#94a3b8">Call #{c.get('call_number')} | Wire Amount: {format_currency(total_cash, '$')}</span>
+                    <small style="color:#4ade80">Payment Due: {date_str}</small><br>
+                    <strong>{data['fund_name']}</strong><br>
+                    <span style="color:#94a3b8">Included items: {calls_str}</span><br>
+                    <span style="font-size:16px; font-weight:bold; color:white;">Net Wire: {format_currency(net_wire, sym)}</span>
                 </div>
                 """, unsafe_allow_html=True)
-        if not future_calls_found:
-            st.info("💡 Add future Capital Calls (check the 'Future Call' box) to see forecasts here")
+        else:
+            st.info("💡 No upcoming capital calls (based on Payment Date).")
 
     st.divider()
     st.subheader("📊 FOF Collection Summary")
@@ -2249,7 +2298,149 @@ def show_gantt(tasks, fund):
                     st.error("Please enter a task name")
 def show_reports():
     st.title("📈 Reports & Analytics")
-    st.info("📊 Reports page - Coming soon! This will include portfolio analytics, performance tracking, and custom report generation.")
     
+    st.markdown("""
+    <div class="dashboard-header">
+    <h1 style="color:white;margin:0;">📈 Portfolio Reports & Analytics</h1>
+    <p style="color:#94a3b8;margin:4px 0 0 0;">Comprehensive view of all fund performance metrics</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    funds = get_funds()
+    all_reports = get_quarterly_reports(None)
+    
+    if not all_reports:
+        st.info("📊 No quarterly reports have been uploaded yet. Add reports in the Portfolio section to see analytics here.")
+        return
+    
+    # Latest reports per fund
+    latest_reports = {}
+    for r in all_reports:
+        fid = r["fund_id"]
+        if fid not in latest_reports:
+            latest_reports[fid] = r
+        else:
+            curr = latest_reports[fid]
+            if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                latest_reports[fid] = r
+    
+    st.markdown("### 📊 Latest Performance Summary")
+    
+    summary_data = []
+    for f in funds:
+        if f["id"] in latest_reports:
+            rep = latest_reports[f["id"]]
+            sym = "€" if f.get("currency") == "EUR" else "$"
+            
+            tvpi = float(rep.get('tvpi') or 0.0)
+            dpi = float(rep.get('dpi') or 0.0)
+            rvpi = float(rep.get('rvpi') or 0.0)
+            irr = float(rep.get('irr') or 0.0)
+            nav = float(rep.get('nav') or 0.0)
+            
+            summary_data.append({
+                "Fund Name": f["name"],
+                "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
+                "NAV": format_currency(nav, sym),
+                "TVPI": f"{tvpi:.2f}x" if tvpi > 0 else "—",
+                "DPI": f"{dpi:.2f}x" if dpi > 0 else "—",
+                "RVPI": f"{rvpi:.2f}x" if rvpi > 0 else "—",
+                "IRR": f"{irr:.1f}%" if irr > 0 else "—"
+            })
+    
+    if summary_data:
+        st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+    
+    st.divider()
+    st.markdown("### 📈 Performance Trends")
+    
+    # Create tabs for each fund
+    fund_names = [f["name"] for f in funds if f["id"] in latest_reports]
+    if fund_names:
+        tabs = st.tabs(fund_names)
+        
+        for i, f in enumerate([fund for fund in funds if fund["id"] in latest_reports]):
+            with tabs[i]:
+                fund_reports = [r for r in all_reports if r["fund_id"] == f["id"]]
+                fund_reports = sorted(fund_reports, key=lambda x: (x["year"], x["quarter"]))
+                
+                if len(fund_reports) > 1:
+                    labels = [f"Q{r['quarter']}/{r['year']}" for r in fund_reports]
+                    
+                    fig = go.Figure()
+                    
+                    if any(r.get("tvpi") for r in fund_reports):
+                        fig.add_trace(go.Scatter(
+                            x=labels, 
+                            y=[float(r.get("tvpi") or 0) for r in fund_reports], 
+                            name="TVPI", 
+                            line=dict(color="#4ade80", width=3),
+                            mode='lines+markers'
+                        ))
+                    
+                    if any(r.get("dpi") for r in fund_reports):
+                        fig.add_trace(go.Scatter(
+                            x=labels, 
+                            y=[float(r.get("dpi") or 0) for r in fund_reports], 
+                            name="DPI", 
+                            line=dict(color="#60a5fa", width=3),
+                            mode='lines+markers'
+                        ))
+                    
+                    if any(r.get("rvpi") for r in fund_reports):
+                        fig.add_trace(go.Scatter(
+                            x=labels, 
+                            y=[float(r.get("rvpi") or 0) for r in fund_reports], 
+                            name="RVPI", 
+                            line=dict(color="#fbbf24", width=3),
+                            mode='lines+markers'
+                        ))
+                    
+                    fig.update_layout(
+                        title=f"{f['name']} - Performance Over Time",
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='#0f172a',
+                        font=dict(color='#e2e8f0', size=14, family='Inter'),
+                        xaxis=dict(gridcolor='#1e293b'),
+                        yaxis=dict(gridcolor='#1e293b', title="Multiple (x)"),
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        ),
+                        hovermode='x unified'
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # IRR trend
+                    if any(r.get("irr") for r in fund_reports):
+                        fig_irr = go.Figure()
+                        fig_irr.add_trace(go.Scatter(
+                            x=labels,
+                            y=[float(r.get("irr") or 0) for r in fund_reports],
+                            name="IRR",
+                            line=dict(color="#a78bfa", width=3),
+                            mode='lines+markers',
+                            fill='tozeroy'
+                        ))
+                        
+                        fig_irr.update_layout(
+                            title=f"{f['name']} - IRR Trend",
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor='#0f172a',
+                            font=dict(color='#e2e8f0', size=14, family='Inter'),
+                            xaxis=dict(gridcolor='#1e293b'),
+                            yaxis=dict(gridcolor='#1e293b', title="IRR (%)"),
+                            showlegend=False,
+                            hovermode='x unified'
+                        )
+                        
+                        st.plotly_chart(fig_irr, use_container_width=True)
+                else:
+                    st.info("Need at least 2 quarterly reports to show trends.")
+                    
 if __name__ == "__main__":
     main()
