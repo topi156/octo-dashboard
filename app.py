@@ -1525,7 +1525,12 @@ def show_fund_detail(fund):
                     value=(tx_type == "repayment"),
                     help="Check if this amount can be called again in the future"
                 )
-                
+                # NEW: Affects Called checkbox
+                affects_called = st.checkbox(
+                "Affects Called (commitment accounting)", 
+                value=True,
+                help="Uncheck ONLY for equalisation interest or items outside commitment"
+                )
                 # NEW: Equalisation Interest
                 equalisation_interest = st.number_input(
                     "Equalisation Interest (outside commitment)", 
