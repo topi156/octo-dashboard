@@ -143,20 +143,14 @@ def calculate_fund_metrics(fund, calls, dists):
         amount = float(c.get("amount") or 0)
         eq_interest = float(c.get("equalisation_interest") or 0)
         
-        # פתרון לבעיית ה-null מהדאטהבייס שהפך ל-None
-        affects_called = c.get("affects_called")
-        if affects_called is None:
-            affects_called = True
-            
         if tx_type == "call":
             total_called += amount
-            total_equalisation_interest += eq_interest  # Track but don't add to called
-        elif tx_type == "repayment" and affects_called:
-            # Recallable repayment reduces called
+            total_equalisation_interest += eq_interest
+        elif tx_type == "repayment":
+            # Repayment reduces called (recallable capital)
             total_called -= amount
         elif tx_type == "distribution":
-            # Always subtract unless explicitly set to False
-        if c.get("affects_called") != False:
+            # Distribution also reduces called for commitment accounting
             total_called -= amount
     
     # Total Distributions (from distributions table)
