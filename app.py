@@ -1449,14 +1449,23 @@ def show_fund_detail(fund):
 ```
                 
             if st.form_submit_button("Save Call to System", type="primary"):
-                try:
-                    get_supabase().table("capital_calls").insert({
-                        "fund_id": fund["id"], "call_number": call_num,
-                        "call_date": str(call_date), "payment_date": str(payment_date),
-                        "amount": amount, "investments": investments,
-                        "mgmt_fee": mgmt_fee, "fund_expenses": fund_expenses,
-                        "gp_contribution": gp_contribution, "is_future": is_future, "notes": notes
-                    }).execute()
+    try:
+        get_supabase().table("capital_calls").insert({
+            "fund_id": fund["id"], 
+            "call_number": call_num,
+            "call_date": str(call_date), 
+            "payment_date": str(payment_date),
+            "transaction_type": tx_type,  # NEW
+            "amount": amount, 
+            "investments": investments,
+            "mgmt_fee": mgmt_fee, 
+            "fund_expenses": fund_expenses,
+            "is_recallable": is_recallable,  # NEW
+            "affects_called": True,  # NEW - always true for now
+            "equalisation_interest": equalisation_interest,  # NEW
+            "is_future": is_future, 
+            "notes": notes
+        }).execute()
                     
                     st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
                     st.success("✅ Saved!")
