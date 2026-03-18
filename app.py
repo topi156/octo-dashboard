@@ -1404,20 +1404,49 @@ def show_fund_detail(fund):
             except: pass
 
         with st.form(f"add_call_{fund['id']}"):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                call_num = st.number_input("Call Number", min_value=1, value=len(calls)+1)
-                call_date = st.date_input("Call Date", value=def_call_date)
-                payment_date = st.date_input("Payment Date", value=def_pay_date)
-            with col2:
-                amount = st.number_input("Total Amount", min_value=0.0, value=float(ai_data.get("amount", 0)))
-                investments = st.number_input("Investments (Capital Commitment)", min_value=0.0, value=float(ai_data.get("investments", 0)))
-                mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
-            with col3:
-                fund_expenses = st.number_input("Fund Expenses", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
-                gp_contribution = st.number_input("GP Contribution", min_value=0.0)
-                is_future = st.checkbox("Future Call")
-                notes = st.text_input("Notes")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        call_num = st.number_input("Call Number", min_value=1, value=len(calls)+1)
+        call_date = st.date_input("Call Date", value=def_call_date)
+        payment_date = st.date_input("Payment Date", value=def_pay_date)
+        
+        # NEW: Transaction Type Selector
+        tx_type = st.selectbox(
+            "Transaction Type",
+            ["call", "repayment", "distribution"],
+            format_func=lambda x: {
+                "call": "💰 Capital Call",
+                "repayment": "🔄 Capital Repayment (Recallable)",
+                "distribution": "📤 Capital Distribution (Non-recallable)"
+            }[x]
+        )
+        
+    with col2:
+        amount = st.number_input("Total Amount", min_value=0.0, value=float(ai_data.get("amount", 0)))
+        investments = st.number_input("Investments (Capital Commitment)", min_value=0.0, value=float(ai_data.get("investments", 0)))
+        mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
+        
+    with col3:
+        fund_expenses = st.number_input("Fund Expenses", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
+        
+        # NEW: Recallable checkbox
+        is_recallable = st.checkbox(
+            "Is Recallable", 
+            value=(tx_type == "repayment"),
+            help="Check if this amount can be called again in the future"
+        )
+        
+        # NEW: Equalisation Interest
+        equalisation_interest = st.number_input(
+            "Equalisation Interest (outside commitment)", 
+            min_value=0.0, 
+            value=0.0,
+            help="Interest paid by late entrants - does NOT count toward Total Called"
+        )
+        
+        is_future = st.checkbox("Future Call")
+        notes = st.text_input("Notes")
+```
                 
             if st.form_submit_button("Save Call to System", type="primary"):
                 try:
