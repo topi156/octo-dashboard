@@ -154,8 +154,9 @@ def calculate_fund_metrics(fund, calls, dists):
         elif tx_type == "repayment" and affects_called:
             # Recallable repayment reduces called
             total_called -= amount
-        elif tx_type == "distribution" and affects_called:
-            # Non-recallable distribution also reduces called for commitment accounting
+        elif tx_type == "distribution":
+            # Always subtract unless explicitly set to False
+        if c.get("affects_called") != False:
             total_called -= amount
     
     # Total Distributions (from distributions table)
