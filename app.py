@@ -1006,7 +1006,7 @@ def show_overview():
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     else:
-        st.info("No funds in the system")
+        st.info("No funds in the system") 
 
     with col2:
         st.subheader("🔔 Upcoming Events")
