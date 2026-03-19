@@ -2586,5 +2586,552 @@ def show_pipeline():
                 tasks = get_gantt_tasks(fund["id"])
                 if tasks is not None:
                     show_gantt(tasks, fund)
+def show_gantt(tasks, fund):
+    import plotly.graph_objects as go
+    from datetime import timedelta
+
+    CAT_CONFIG = {
+        "Analysis": {"icon": "🟢", "color": "#16a34a", "bg": "#052e16"},
+        "Legal":    {"icon": "🔵", "color": "#2563eb", "bg": "#0c1a4b"},
+        "Tax":      {"icon": "🔴", "color": "#dc2626", "bg": "#3b0a0a"},
+        "Admin":    {"icon": "🟡", "color": "#ca8a04", "bg": "#2d2000"},
+        "IC":       {"icon": "🟣", "color": "#9333ea", "bg": "#2d0a4b"},
+        "DD":       {"icon": "🟠", "color": "#ea580c", "bg": "#3b1a00"},
+    }
+    STATUS_CONFIG = {
+        "todo":        {"icon": "⬜", "label": "To Do",       "color": "#64748b"},
+        "in_progress": {"icon": "🔄", "label": "In Progress", "color": "#3b82f6"},
+        "done":        {"icon": "✅", "label": "Done",        "color": "#22c55e"},
+        "blocked":     {"icon": "🚫", "label": "Blocked",     "color": "#ef4444"},
+    }
+    
+    STATUS_LIST = ["todo", "in_progress", "done", "blocked"]
+    UI_STATUS_LIST = [STATUS_CONFIG[s]["label"] for s in STATUS_LIST]
+
+    sb = get_supabase()
+    fid = fund["id"]
+
+    total = len(tasks)
+    done_n = sum(1 for t in tasks if t.get("status") == "done")
+    in_prog = sum(1 for t in tasks if t.get("status") == "in_progress")
+    blocked_n = sum(1 for t in tasks if t.get("status") == "blocked")
+    pct = int(done_n / total * 100) if total else 0
+
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border-radius:12px;padding:16px 20px;margin:12px 0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <span style="color:#94a3b8;font-size:13px;">Overall Progress</span>
+            <span style="color:#4ade80;font-weight:700;font-size:18px;">{pct}%</span>
+        </div>
+        <div style="background:#0f172a;border-radius:6px;height:8px;overflow:hidden;">
+            <div style="background:linear-gradient(90deg,#16a34a,#4ade80);width:{pct}%;height:100%;border-radius:6px;transition:width 0.5s;"></div>
+        </div>
+        <div style="display:flex;gap:20px;margin-top:12px;">
+            <span style="color:#4ade80;font-size:12px;">✅ Done: {done_n}</span>
+            <span style="color:#3b82f6;font-size:12px;">🔄 In Progress: {in_prog}</span>
+            <span style="color:#ef4444;font-size:12px;">🚫 Blocked: {blocked_n}</span>
+            <span style="color:#64748b;font-size:12px;">⬜ To Do: {total - done_n - in_prog - blocked_n}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_hdr1, col_hdr2 = st.columns([3, 1])
+    with col_hdr1:
+        st.markdown("##### 📊 Gantt Chart View")
+    with col_hdr2:
+        show_done = st.toggle("Show completed tasks", value=True, key=f"show_done_toggle_{fid}")
+
+    visible_tasks = tasks if show_done else [t for t in tasks if t.get("status") != "done"]
+
+    gantt_tasks_data = []
+    today_dt = date.today()
+    for t in visible_tasks:
+        if t.get("start_date") and t.get("due_date"):
+            cat = t.get("category", "Admin")
+            cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
+            status = t.get("status", "todo")
+            
+            if status == "done":
+                bar_color = "#22c55e" 
+                icon = "✅"
+                task_display = f"<s>{t['task_name']}</s>"
+            elif status == "blocked":
+                bar_color = "#ef4444" 
+                icon = cfg['icon']
+                task_display = t['task_name']
+            elif status == "in_progress":
+                bar_color = "#3b82f6" 
+                icon = cfg['icon']
+                task_display = t['task_name']
+            else:
+                bar_color = "#475569" 
+                icon = cfg['icon']
+                task_display = t['task_name']
+
+            gantt_tasks_data.append({
+                "Task": f"{icon} {task_display}",
+                "RawName": t["task_name"],
+                "Start": t["start_date"],
+                "Finish": t["due_date"],
+                "Color": bar_color,
+                "Category": cat,
+                "Status": STATUS_CONFIG.get(status, {}).get("label", status),
+            })
+
+    if gantt_tasks_data:
+        fig = go.Figure()
+        sorted_tasks = sorted(gantt_tasks_data, key=lambda x: x["Start"], reverse=True)
+
+        for i, t in enumerate(sorted_tasks):
+            start_dt_val = datetime.fromisoformat(t["Start"])
+            finish_dt_val = datetime.fromisoformat(t["Finish"]) + timedelta(days=1)
+            duration_ms = (finish_dt_val - start_dt_val).total_seconds() * 1000
+
+            fig.add_trace(go.Bar(
+                x=[duration_ms],
+                y=[t["Task"]],
+                base=[t["Start"]],
+                orientation="h",
+                marker=dict(color=t["Color"], opacity=0.95, line=dict(width=1, color="#0f172a")),
+                text=[f" {t['Status']}"],
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(color="white", size=13, family="Inter"),
+                hovertemplate=f"<b>{t['RawName']}</b><br>{t['Start']} → {t['Finish']}<br>Status: {t['Status']}<extra></extra>",
+                showlegend=False,
+            ))
+            
+        fig.add_shape(
+            type="line",
+            x0=str(today_dt), x1=str(today_dt),
+            y0=0, y1=1, yref="paper",
+            line=dict(color="#f59e0b", width=2, dash="dash"),
+        )
+        fig.add_annotation(
+            x=str(today_dt), y=1, yref="paper",
+            text="Today", showarrow=False,
+            font=dict(color="#f59e0b", size=13, family="Inter"),
+            yanchor="bottom"
+        )
+        
+        fig.update_layout(
+            height=max(350, len(sorted_tasks) * 45 + 100),
+            barmode="overlay",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="#0f172a",
+            font=dict(color="#e2e8f0", size=14, family="Inter"),
+            margin=dict(l=10, r=20, t=40, b=40),
+            xaxis=dict(type="date", gridcolor="#1e293b", tickformat="%d/%m/%y", tickfont=dict(size=13)),
+            yaxis=dict(gridcolor="#1e293b", tickfont=dict(size=14), automargin=True),
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"gantt_chart_{fid}")
+    else:
+        st.info("No tasks to display in this chart currently.")
+
+    st.markdown("##### 📋 Edit Tasks")
+    
+    cats_order = ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"]
+    for cat in cats_order:
+        cat_tasks = [t for t in visible_tasks if t.get("category","") == cat]
+        if not cat_tasks:
+            continue
+
+        cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
+        all_cat_tasks = [t for t in tasks if t.get("category","") == cat]
+        done_c = sum(1 for t in all_cat_tasks if t.get("status") == "done")
+        cat_pct = int(done_c / len(all_cat_tasks) * 100)
+
+        st.markdown(f"""
+        <div style="background:{cfg['bg']};border-left:3px solid {cfg['color']};
+                    border-radius:8px;padding:10px 14px;margin:8px 0 4px 0;
+                    display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:{cfg['color']};font-weight:600;">{cfg['icon']} {cat}</span>
+            <span style="color:#94a3b8;font-size:12px;">{done_c}/{len(all_cat_tasks)} · {cat_pct}%</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        for t in cat_tasks:
+            current_status = t.get("status", "todo")
+            scfg = STATUS_CONFIG.get(current_status, STATUS_CONFIG["todo"])
+            current_ui_label = scfg["label"]
+            
+            try:
+                current_start = datetime.fromisoformat(t["start_date"]).date() if t.get("start_date") else date.today()
+                current_due = datetime.fromisoformat(t["due_date"]).date() if t.get("due_date") else date.today()
+            except:
+                current_start, current_due = date.today(), date.today()
+
+            col_icon, col_name, col_start, col_due, col_status, col_del = st.columns([0.5, 3, 2, 2, 2, 0.5])
+            with col_icon:
+                st.markdown(f"<div style='margin-top:5px; font-size:18px;'>{scfg['icon']}</div>", unsafe_allow_html=True)
+            with col_name:
+                new_name = st.text_input("Task Name", value=t["task_name"], key=f"name_{fid}_{t['id']}", label_visibility="collapsed")
+            with col_start:
+                new_start = st.date_input("Start", value=current_start, key=f"start_{fid}_{t['id']}", label_visibility="collapsed")
+            with col_due:
+                new_due = st.date_input("End", value=current_due, key=f"due_{fid}_{t['id']}", label_visibility="collapsed")
+            with col_status:
+                new_ui_label = st.selectbox(
+                    "Status",
+                    UI_STATUS_LIST,
+                    index=UI_STATUS_LIST.index(current_ui_label) if current_ui_label in UI_STATUS_LIST else 0,
+                    key=f"status_{fid}_{t['id']}",
+                    label_visibility="collapsed"
+                )
+            
+            new_status_mapped = [k for k, v in STATUS_CONFIG.items() if v["label"] == new_ui_label][0]
+
+            with col_del:
+                if st.button("🗑️", key=f"del_{fid}_{t['id']}", help="Delete Task"):
+                    try:
+                        log_action("DELETE", "gantt_tasks", f"Deleted Gantt task: {t['task_name']}", t)
+                        sb.table("gantt_tasks").delete().eq("id", t["id"]).execute()
+                        clear_cache_and_rerun()
+                    except Exception as e:
+                        st.error(f"Delete Error: {e}")
+                
+            if new_status_mapped != current_status or str(new_start) != t.get("start_date") or str(new_due) != t.get("due_date") or new_name != t["task_name"]:
+                try:
+                    sb.table("gantt_tasks").update({
+                        "task_name": new_name,
+                        "status": new_status_mapped,
+                        "start_date": str(new_start),
+                        "due_date": str(new_due)
+                    }).eq("id", t["id"]).execute()
+                    clear_cache_and_rerun()
+                except Exception as e:
+                    st.error(f"Update Task Error: {e}")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("➕ Add New Task to Gantt"):
+        with st.form(f"add_new_task_{fid}"):
+            c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+            with c1:
+                new_t_name = st.text_input("Task Name")
+            with c2:
+                new_t_cat = st.selectbox("Category", ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"])
+            with c3:
+                new_t_start = st.date_input("Start Date", value=date.today())
+            with c4:
+                new_t_due = st.date_input("Due Date", value=date.today())
+            
+            if st.form_submit_button("Save Task", type="primary"):
+                if new_t_name:
+                    try:
+                        sb.table("gantt_tasks").insert({
+                            "pipeline_fund_id": fid,
+                            "task_name": new_t_name,
+                            "category": new_t_cat,
+                            "start_date": str(new_t_start),
+                            "due_date": str(new_t_due),
+                            "status": "todo"
+                        }).execute()
+                        st.success("Task successfully added!")
+                        clear_cache_and_rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.error("Please enter a task name")
+def show_reports():
+    st.title("📈 Reports & Analytics")
+    
+    st.markdown("""
+    <div class="dashboard-header">
+    <h1 style="color:white;margin:0;">📈 Portfolio Reports & Analytics</h1>
+    <p style="color:#94a3b8;margin:4px 0 0 0;">Comprehensive view of all fund performance metrics</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    sb = get_supabase()
+    funds = get_funds()
+    all_reports = get_quarterly_reports(None)
+    
+    # Add/Upload Section
+    st.divider()
+    col_add, col_summary = st.columns([1, 1])
+    
+    with col_add:
+        with st.expander("➕ Add / Upload Quarterly Reports"):
+            fund_options = {f["name"]: f["id"] for f in funds}
+            if not fund_options:
+                st.warning("No funds in portfolio. Add a fund first.")
+            else:
+                tab_manual, tab_upload = st.tabs(["Manual Entry", "Upload & AI Extract"])
+                
+                with tab_manual:
+                    with st.form("manual_report_form"):
+                        st.markdown("**Add Report Manually**")
+                        selected_fund = st.selectbox("Select Fund", list(fund_options.keys()))
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            year = st.number_input("Year", min_value=2020, max_value=2030, value=2025)
+                            quarter = st.selectbox("Quarter", [1, 2, 3, 4])
+                            report_date = st.date_input("Report Date")
+                        with col2:
+                            nav = st.number_input("NAV (Fund Level)", min_value=0.0)
+                            tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f")
+                            dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f")
+                        
+                        col3, col4 = st.columns(2)
+                        with col3:
+                            rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f")
+                        with col4:
+                            irr = st.number_input("IRR %", step=0.1, format="%.1f")
+                        
+                        notes = st.text_area("Notes")
+                        
+                        if st.form_submit_button("💾 Save Report", type="primary"):
+                            try:
+                                fund_id = fund_options[selected_fund]
+                                sb.table("quarterly_reports").insert({
+                                    "fund_id": fund_id,
+                                    "year": year,
+                                    "quarter": quarter,
+                                    "report_date": str(report_date),
+                                    "nav": nav,
+                                    "tvpi": tvpi,
+                                    "dpi": dpi,
+                                    "rvpi": rvpi,
+                                    "irr": irr,
+                                    "notes": notes
+                                }).execute()
+                                log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
+                                st.success("✅ Report saved!")
+                                clear_cache_and_rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                
+                with tab_upload:
+                    st.markdown("**Upload Report File (PDF/Excel/CSV)**")
+                    selected_fund_upload = st.selectbox("Select Fund", list(fund_options.keys()), key="upload_fund")
+                    uploaded_file = st.file_uploader("Upload File", type=["pdf", "xlsx", "xls", "csv"])
+                    
+                    if uploaded_file:
+                        if st.button("🤖 Analyze with AI", type="primary"):
+                            with st.spinner("Claude is analyzing..."):
+                                try:
+                                    file_bytes = uploaded_file.read()
+                                    file_name = uploaded_file.name
+                                    
+                                    if file_name.lower().endswith('.pdf'):
+                                        rep_text = extract_pdf_text(file_bytes)
+                                    else:
+                                        if file_name.lower().endswith('.csv'):
+                                            df = pd.read_csv(io.BytesIO(file_bytes))
+                                        else:
+                                            df = pd.read_excel(io.BytesIO(file_bytes))
+                                        rep_text = df.to_string(index=False)
+                                        if len(rep_text) > 12000:
+                                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
+                                    
+                                    ai_result = analyze_quarterly_report_with_ai(rep_text)
+                                    st.session_state.report_ai_result = ai_result
+                                    st.success("✅ Extracted! Review below and save:")
+                                    
+                                    with st.form("ai_report_confirm"):
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            year_ai = st.number_input("Year", value=int(ai_result.get("year") or 2025))
+                                            quarter_ai = st.selectbox("Quarter", [1,2,3,4], index=[1,2,3,4].index(int(ai_result.get("quarter") or 1)))
+                                            nav_ai = st.number_input("NAV", value=float(ai_result.get("nav") or 0.0))
+                                        with col2:
+                                            tvpi_ai = st.number_input("TVPI", value=float(ai_result.get("tvpi") or 0.0), step=0.01, format="%.2f")
+                                            dpi_ai = st.number_input("DPI", value=float(ai_result.get("dpi") or 0.0), step=0.01, format="%.2f")
+                                            rvpi_ai = st.number_input("RVPI", value=float(ai_result.get("rvpi") or 0.0), step=0.01, format="%.2f")
+                                        
+                                        irr_ai = st.number_input("IRR %", value=float(ai_result.get("irr") or 0.0), step=0.1, format="%.1f")
+                                        
+                                        if st.form_submit_button("💾 Confirm & Save", type="primary"):
+                                            try:
+                                                fund_id = fund_options[selected_fund_upload]
+                                                sb.table("quarterly_reports").insert({
+                                                    "fund_id": fund_id,
+                                                    "year": year_ai,
+                                                    "quarter": quarter_ai,
+                                                    "report_date": str(date.today()),
+                                                    "nav": nav_ai,
+                                                    "tvpi": tvpi_ai,
+                                                    "dpi": dpi_ai,
+                                                    "rvpi": rvpi_ai,
+                                                    "irr": irr_ai
+                                                }).execute()
+                                                st.success("✅ Report saved!")
+                                                st.session_state.pop("report_ai_result", None)
+                                                clear_cache_and_rerun()
+                                            except Exception as e:
+                                                st.error(f"Error: {e}")
+                                except Exception as e:
+                                    st.error(f"Analysis error: {e}")
+    
+    with col_summary:
+        with st.expander("📊 Portfolio Summary Statistics"):
+            if all_reports:
+                latest_reports = {}
+                for r in all_reports:
+                    fid = r["fund_id"]
+                    if fid not in latest_reports:
+                        latest_reports[fid] = r
+                    else:
+                        curr = latest_reports[fid]
+                        if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                            latest_reports[fid] = r
+                
+                avg_tvpi = sum(float(r.get("tvpi") or 0) for r in latest_reports.values()) / len(latest_reports) if latest_reports else 0
+                avg_dpi = sum(float(r.get("dpi") or 0) for r in latest_reports.values()) / len(latest_reports) if latest_reports else 0
+                avg_irr = sum(float(r.get("irr") or 0) for r in latest_reports.values()) / len(latest_reports) if latest_reports else 0
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Avg TVPI", f"{avg_tvpi:.2f}x")
+                with col2:
+                    st.metric("Avg DPI", f"{avg_dpi:.2f}x")
+                with col3:
+                    st.metric("Avg IRR", f"{avg_irr:.1f}%")
+            else:
+                st.info("No reports yet")
+    
+    st.divider()
+    
+    # Reports Table
+    if not all_reports:
+        st.info("📊 No quarterly reports. Add reports above to see analytics.")
+        return
+    
+    st.markdown("### 📋 All Quarterly Reports")
+    
+    # Build reports table
+    reports_data = []
+    for r in all_reports:
+        fund = next((f for f in funds if f["id"] == r["fund_id"]), None)
+        if fund:
+            reports_data.append({
+                "id": r["id"],
+                "Fund": fund["name"],
+                "Quarter": f"Q{r['quarter']}/{r['year']}",
+                "Report Date": r.get("report_date", ""),
+                "NAV": format_currency(float(r.get("nav") or 0), "€" if fund.get("currency") == "EUR" else "$"),
+                "TVPI": f"{float(r.get('tvpi') or 0):.2f}x",
+                "DPI": f"{float(r.get('dpi') or 0):.2f}x",
+                "RVPI": f"{float(r.get('rvpi') or 0):.2f}x",
+                "IRR": f"{float(r.get('irr') or 0):.1f}%"
+            })
+    
+    if reports_data:
+        df = pd.DataFrame(reports_data)
+        
+        # Export button
+        col_export, col_space = st.columns([1, 5])
+        with col_export:
+            excel_data = convert_df_to_excel(df.drop(columns=["id"], errors="ignore"))
+            st.download_button(
+                label="📥 Export Excel",
+                data=excel_data,
+                file_name=f"Portfolio_Reports_{date.today()}.xlsx",
+                use_container_width=True
+            )
+        
+        # Display table
+        st.dataframe(df.drop(columns=["id"]), use_container_width=True, hide_index=True)
+        
+        # Edit/Delete for each report
+        st.markdown("#### ⚙️ Manage Reports")
+        for idx, row in df.iterrows():
+            report_id = row["id"]
+            with st.expander(f"{row['Fund']} - {row['Quarter']}", expanded=False):
+                col_edit, col_del = st.columns([5, 1])
+                with col_del:
+                    if st.button("🗑️ Delete", key=f"del_rep_{report_id}"):
+                        st.session_state[f"confirm_del_report_{report_id}"] = True
+                
+                if st.session_state.get(f"confirm_del_report_{report_id}"):
+                    st.warning("Delete this report?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Yes", key=f"yes_rep_{report_id}"):
+                            try:
+                                rep = next(r for r in all_reports if r["id"] == report_id)
+                                log_action("DELETE", "quarterly_reports", f"Deleted {row['Quarter']} report for {row['Fund']}", rep)
+                                sb.table("quarterly_reports").delete().eq("id", report_id).execute()
+                                st.session_state.pop(f"confirm_del_report_{report_id}", None)
+                                clear_cache_and_rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    with c2:
+                        if st.button("❌ Cancel", key=f"no_rep_{report_id}"):
+                            st.session_state.pop(f"confirm_del_report_{report_id}", None)
+                            st.rerun()
+    
+    st.divider()
+    
+    # Performance Trends
+    st.markdown("### 📈 Performance Trends")
+    
+    latest_reports = {}
+    for r in all_reports:
+        fid = r["fund_id"]
+        if fid not in latest_reports:
+            latest_reports[fid] = r
+        else:
+            curr = latest_reports[fid]
+            if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                latest_reports[fid] = r
+    
+    fund_names = [f["name"] for f in funds if f["id"] in latest_reports]
+    if fund_names:
+        tabs = st.tabs(fund_names)
+        
+        for i, f in enumerate([fund for fund in funds if fund["id"] in latest_reports]):
+            with tabs[i]:
+                fund_reports = [r for r in all_reports if r["fund_id"] == f["id"]]
+                fund_reports = sorted(fund_reports, key=lambda x: (x["year"], x["quarter"]))
+                
+                if len(fund_reports) > 1:
+                    labels = [f"Q{r['quarter']}/{r['year']}" for r in fund_reports]
+                    
+                    # Multiples Chart
+                    fig = go.Figure()
+                    if any(r.get("tvpi") for r in fund_reports):
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("tvpi") or 0) for r in fund_reports], 
+                                                name="TVPI", line=dict(color="#4ade80", width=3), mode='lines+markers'))
+                    if any(r.get("dpi") for r in fund_reports):
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("dpi") or 0) for r in fund_reports], 
+                                                name="DPI", line=dict(color="#60a5fa", width=3), mode='lines+markers'))
+                    if any(r.get("rvpi") for r in fund_reports):
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("rvpi") or 0) for r in fund_reports], 
+                                                name="RVPI", line=dict(color="#fbbf24", width=3), mode='lines+markers'))
+                    
+                    fig.update_layout(
+                        title=f"{f['name']} - Multiples Over Time",
+                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0f172a',
+                        font=dict(color='#e2e8f0', size=14, family='Inter'),
+                        xaxis=dict(gridcolor='#1e293b'), yaxis=dict(gridcolor='#1e293b', title="Multiple (x)"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # IRR Chart
+                    if any(r.get("irr") for r in fund_reports):
+                        fig_irr = go.Figure()
+                        fig_irr.add_trace(go.Scatter(
+                            x=labels, y=[float(r.get("irr") or 0) for r in fund_reports],
+                            name="IRR", line=dict(color="#a78bfa", width=3),
+                            mode='lines+markers', fill='tozeroy'
+                        ))
+                        fig_irr.update_layout(
+                            title=f"{f['name']} - IRR Trend",
+                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0f172a',
+                            font=dict(color='#e2e8f0', size=14, family='Inter'),
+                            xaxis=dict(gridcolor='#1e293b'), yaxis=dict(gridcolor='#1e293b', title="IRR (%)"),
+                            showlegend=False, hovermode='x unified'
+                        )
+                        st.plotly_chart(fig_irr, use_container_width=True)
+                else:
+                    st.info("Need at least 2 quarterly reports to show trends.")
+                    
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()
