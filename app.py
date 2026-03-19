@@ -2546,29 +2546,45 @@ def show_pipeline():
         st.info("No pipeline funds. Click 'Upload PDF' or 'Add Manually'.")
         return
 
-    for fund in pipeline:
-        fid = fund["id"]
-        priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(fund.get("priority",""), "⚪")
-        with st.expander(f"{priority_emoji} {fund['name']} | {fund.get('strategy','')} | Close: {fund.get('target_close_date','')}", expanded=False):
-            col_a, col_b, col_c = st.columns([1, 1, 4])
-            with col_a:
-                if st.button("✏️ Edit", key=f"edit_btn_{fid}"):
-                    st.session_state[f"editing_{fid}"] = True
-            with col_b:
+        for fund in pipeline:
+            fid = fund["id"]
+            with st.expander(f"{fund['name']} | Close: {fund.get('target_close_date','')}", expanded=False):
                 if st.button("🗑️ Delete", key=f"del_btn_{fid}"):
                     st.session_state[f"confirm_delete_{fid}"] = True
-
-            if st.session_state.get(f"confirm_delete_{fid}"):
-                st.warning(f"⚠️ Delete '{fund['name']}'? This action will also delete all associated Gantt tasks.")
-                col_yes, col_no = st.columns(2)
-                with col_yes:
-                    if st.button("✅ Yes, delete", key=f"yes_btn_{fid}", type="primary"):
-                        try:
-                            sb = get_supabase()
-                            log_action("DELETE", "pipeline_funds", f"Deleted pipeline fund: {fund['name']}", fund)
+                
+                if st.session_state.get(f"confirm_delete_{fid}"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Yes, delete", key=f"yes_btn_{fid}", type="primary"):
                             sb.table("gantt_tasks").delete().eq("pipeline_fund_id", fid).execute()
                             sb.table("pipeline_funds").delete().eq("id", fid).execute()
-                            st.success("Deleted!")
-                            st.session_state.pop(f"confirm_delete_{fid}", None)
-                            clear_cache_and_rerun()
-                        except Exception as e:
+                            st.session_state.pop(f"confirm_delete_{fid}", None); clear_cache_and_rerun()
+                    with c2:
+                        if st.button("❌ Cancel", key=f"no_btn_{fid}"):
+                            st.session_state.pop(f"confirm_delete_{fid}", None); st.rerun()
+                show_gantt(get_gantt_tasks(fid), fund)
+    
+    def show_gantt(tasks, fund):
+        if not tasks: st.write("No tasks."); return
+        fid = fund["id"]
+        done_n = sum(1 for t in tasks if t.get("status") == "done")
+        pct = int(done_n / len(tasks) * 100) if tasks else 0
+        st.progress(pct / 100.0, text=f"Progress: {pct}%")
+        
+        for t in tasks:
+            col1, col2 = st.columns([3, 1])
+            col1.write(f"**{t['task_name']}** ({t.get('status')})")
+            if col2.button("🗑️", key=f"del_task_{t['id']}"):
+                get_supabase().table("gantt_tasks").delete().eq("id", t["id"]).execute(); clear_cache_and_rerun()
+    
+    def show_reports():
+        st.title("📈 Reports & Analytics")
+        all_reports = get_quarterly_reports(None)
+        if all_reports:
+            df = pd.DataFrame(all_reports)
+            st.dataframe(df[["year", "quarter", "nav", "tvpi", "irr"]], use_container_width=True)
+        else:
+            st.info("No reports yet.")
+    
+    if __name__ == "__main__":
+        main()
