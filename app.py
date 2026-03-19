@@ -2366,14 +2366,12 @@ def show_pipeline():
                         st.success("✅ Analysis complete!")
                     except Exception as e:
                         st.error(f"Error: {e}")
-        
         if st.session_state.get("pdf_result"):
             r = st.session_state.pdf_result
             st.divider()
             st.markdown("### 📋 Extracted Details – Review and Confirm")
             if r.get("key_highlights"):
                 st.info(f"💡 {r.get('key_highlights')}")
-            
             with st.form("pdf_pipeline_form"):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -2383,27 +2381,57 @@ def show_pipeline():
                     ai_strategy = r.get("strategy", "Growth")
                     strategy_idx = strategy_options.index(ai_strategy) if ai_strategy in strategy_options else 0
                     strategy = st.selectbox("Strategy", strategy_options, index=strategy_idx)
-                
+                    geographic = st.text_input("Geographic Focus", value=r.get("geographic_focus") or "")
+                    sector = st.text_input("Sector Focus", value=r.get("sector_focus") or "")
                 with col2:
+                    fund_size = r.get("fund_size_target") or 0
                     target_commitment = st.number_input("Our Target Commitment", min_value=0.0, value=0.0, step=500000.0)
                     currency = st.selectbox("Currency", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
                     target_close = st.date_input("Target Close Date")
+                    
+                    priority_opts = ["High", "Medium", "Low"]
+                    priority_ui = st.selectbox("Priority", priority_opts, index=1)
+                    
+                st.divider()
+                st.markdown("**📊 Fund Metrics (For Documentation)**")
+                col3, col4, col5 = st.columns(3)
+                with col3:
+                    st.metric("Target Size", f"${fund_size:,.0f}M" if fund_size else "—")
+                    hard_cap = r.get("fund_size_hard_cap")
+                    st.metric("Hard Cap", f"${hard_cap:,.0f}M" if hard_cap else "—")
+                with col4:
+                    moic_low = r.get("target_return_moic_low")
+                    moic_high = r.get("target_return_moic_high")
+                    st.metric("Target MOIC", f"{moic_low}x-{moic_high}x" if moic_low and moic_high else "—")
+                    irr = r.get("target_irr_gross")
+                    st.metric("Target Gross IRR", f"{irr}%" if irr else "—")
+                with col5:
+                    mgmt = r.get("mgmt_fee_pct")
+                    carry = r.get("carried_interest_pct")
+                    hurdle = r.get("preferred_return_pct")
+                    st.metric("Mgmt Fee", f"{mgmt}%" if mgmt else "—")
+                    st.metric("Carry / Hurdle", f"{carry}% / {hurdle}%" if carry and hurdle else "—")
                 
-                notes = st.text_area("Notes")
+                aum_str = f" | Manager AUM: ${r.get('aum_manager')}B" if r.get("aum_manager") else ""
+                irr_str = f" | IRR: {r.get('target_irr_gross')}%" if r.get("target_irr_gross") else ""
+                moic_str = f" | MOIC: {r.get('target_return_moic_low')}x-{r.get('target_return_moic_high')}x" if r.get("target_return_moic_low") else ""
+                notes_default = f"Fund Size: ${fund_size:,.0f}M{moic_str}{irr_str}{aum_str}" if fund_size else ""
+                notes = st.text_area("Notes", value=notes_default)
                 
-                if st.form_submit_button("✅ Create Pipeline Fund", type="primary"):
+                if st.form_submit_button("✅ Create Pipeline Fund + Gantt", type="primary"):
                     try:
                         sb = get_supabase()
-                        sb.table("pipeline_funds").insert({
-                            "name": fund_name,
-                            "manager": manager,
-                            "strategy": strategy,
+                        res = sb.table("pipeline_funds").insert({
+                            "name": fund_name, "manager": manager, "strategy": strategy,
                             "target_commitment": target_commitment,
-                            "currency": currency,
-                            "target_close_date": str(target_close),
-                            "priority": "medium",
-                            "notes": notes
+                            "currency": currency, "target_close_date": str(target_close),
+                            "priority": priority_ui.lower(), "notes": notes
                         }).execute()
+                        fund_id = res.data[0]["id"]
+                        try:
+                            sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
+                        except:
+                            pass
                         st.success(f"✅ Fund '{fund_name}' created!")
                         st.session_state.pdf_result = None
                         st.session_state.show_pdf_upload = False
@@ -2424,22 +2452,24 @@ def show_pipeline():
                 target_commitment_input = st.number_input("Target Commitment", min_value=0.0, value=0.0, step=500000.0)
                 currency = st.selectbox("Currency", ["USD", "EUR"])
                 target_close = st.date_input("Closing Date")
-            
+                
+                priority_opts = ["High", "Medium", "Low"]
+                priority_ui = st.selectbox("Priority", priority_opts, index=1)
+                
             notes = st.text_area("Notes")
-            
-            if st.form_submit_button("Create Fund", type="primary"):
+            if st.form_submit_button("Create Fund + Gantt", type="primary"):
                 try:
                     sb = get_supabase()
-                    sb.table("pipeline_funds").insert({
-                        "name": name,
-                        "manager": manager,
-                        "strategy": strategy,
-                        "target_commitment": target_commitment_input,
-                        "currency": currency,
-                        "target_close_date": str(target_close),
-                        "priority": "medium",
-                        "notes": notes
+                    res = sb.table("pipeline_funds").insert({
+                        "name": name, "manager": manager, "strategy": strategy,
+                        "target_commitment": target_commitment_input, "currency": currency,
+                        "target_close_date": str(target_close), "priority": priority_ui.lower(), "notes": notes
                     }).execute()
+                    fund_id = res.data[0]["id"]
+                    try:
+                        sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
+                    except:
+                        pass
                     st.success(f"✅ Fund '{name}' created!")
                     st.session_state.show_add_pipeline = False
                     clear_cache_and_rerun()
@@ -2452,41 +2482,94 @@ def show_pipeline():
         st.info("No pipeline funds. Click 'Upload PDF' or 'Add Manually'.")
         return
 
-    # Display pipeline funds
     for fund in pipeline:
         fid = fund["id"]
         priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(fund.get("priority",""), "⚪")
-        
         with st.expander(f"{priority_emoji} {fund['name']} | {fund.get('strategy','')} | Close: {fund.get('target_close_date','')}", expanded=False):
-            col_a, col_b = st.columns([5, 1])
-            
+            col_a, col_b, col_c = st.columns([1, 1, 4])
+            with col_a:
+                if st.button("✏️ Edit", key=f"edit_btn_{fid}"):
+                    st.session_state[f"editing_{fid}"] = True
             with col_b:
                 if st.button("🗑️ Delete", key=f"del_btn_{fid}"):
                     st.session_state[f"confirm_delete_{fid}"] = True
-            
+
             if st.session_state.get(f"confirm_delete_{fid}"):
-                st.warning(f"⚠️ Delete '{fund['name']}'?")
-                c1, c2 = st.columns(2)
-                with c1:
+                st.warning(f"⚠️ Delete '{fund['name']}'? This action will also delete all associated Gantt tasks.")
+                col_yes, col_no = st.columns(2)
+                with col_yes:
                     if st.button("✅ Yes, delete", key=f"yes_btn_{fid}", type="primary"):
                         try:
                             sb = get_supabase()
                             log_action("DELETE", "pipeline_funds", f"Deleted pipeline fund: {fund['name']}", fund)
                             sb.table("gantt_tasks").delete().eq("pipeline_fund_id", fid).execute()
                             sb.table("pipeline_funds").delete().eq("id", fid).execute()
+                            st.success("Deleted!")
                             st.session_state.pop(f"confirm_delete_{fid}", None)
                             clear_cache_and_rerun()
                         except Exception as e:
                             st.error(f"Error: {e}")
-                with c2:
+                with col_no:
                     if st.button("❌ Cancel", key=f"no_btn_{fid}"):
                         st.session_state.pop(f"confirm_delete_{fid}", None)
                         st.rerun()
+
+            if st.session_state.get(f"editing_{fid}"):
+                with st.form(f"edit_form_{fid}"):
+                    st.markdown("**✏️ Edit Fund Details**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        new_name = st.text_input("Fund Name", value=fund.get("name",""))
+                        new_manager = st.text_input("Manager", value=fund.get("manager",""))
+                        strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
+                        cur_strat = fund.get("strategy","Growth")
+                        new_strategy = st.selectbox("Strategy", strategy_opts,
+                            index=strategy_opts.index(cur_strat) if cur_strat in strategy_opts else 0)
+                        new_geo = st.text_input("Geographic Focus", value=fund.get("geographic_focus","") or "")
+                    with col2:
+                        cur_commit = float(fund.get("target_commitment") or 0)
+                        if 0 < cur_commit <= 1000:
+                            cur_commit *= 1_000_000
+                        new_commitment_input = st.number_input("Target Commitment", value=cur_commit, step=500000.0)
+                        
+                        cur_currency = fund.get("currency","USD")
+                        new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_currency=="USD" else 1)
+                        
+                        priority_opts = ["High", "Medium", "Low"]
+                        cur_priority = fund.get("priority","medium").capitalize()
+                        new_priority_ui = st.selectbox("Priority", priority_opts,
+                            index=priority_opts.index(cur_priority) if cur_priority in priority_opts else 1)
+                        
+                        cur_date = fund.get("target_close_date")
+                        try:
+                            default_date = datetime.fromisoformat(str(cur_date)).date() if cur_date else date.today()
+                        except:
+                            default_date = date.today()
+                        new_close = st.date_input("Closing Date", value=default_date)
+                    new_notes = st.text_area("Notes", value=fund.get("notes","") or "")
+                    col_save, col_cancel = st.columns(2)
+                    with col_save:
+                        if st.form_submit_button("💾 Save Changes", type="primary"):
+                            try:
+                                log_action("UPDATE", "pipeline_funds", f"Updated pipeline fund details: {fund['name']}", fund)
+                                get_supabase().table("pipeline_funds").update({
+                                    "name": new_name, "manager": new_manager,
+                                    "strategy": new_strategy, "target_commitment": new_commitment_input,
+                                    "currency": new_currency, "priority": new_priority_ui.lower(),
+                                    "target_close_date": str(new_close), "notes": new_notes
+                                }).eq("id", fid).execute()
+                                st.success("✅ Updated!")
+                                st.session_state.pop(f"editing_{fid}", None)
+                                clear_cache_and_rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    with col_cancel:
+                        if st.form_submit_button("❌ Cancel"):
+                            st.session_state.pop(f"editing_{fid}", None)
+                            st.rerun()
             else:
-                # Show fund details
                 col1, col2, col3 = st.columns(3)
                 currency_sym = "€" if fund.get("currency") == "EUR" else "$"
-                
                 with col1:
                     commitment = float(fund.get("target_commitment") or 0)
                     st.metric("Target Commitment", format_currency(commitment, currency_sym))
@@ -2495,7 +2578,13 @@ def show_pipeline():
                 with col3:
                     st.metric("Priority", fund.get("priority", "").upper())
                 
-                if fund.get("notes"):
-                    st.caption(f"📝 {fund['notes']}")
+                notes_text = fund.get("notes") or ""
+                notes_text = notes_text.replace("NoneB", "").replace("None", "").replace("x-x", "") 
+                if notes_text.strip():
+                    st.caption(f"📝 {notes_text}")
+                
+                tasks = get_gantt_tasks(fund["id"])
+                if tasks is not None:
+                    show_gantt(tasks, fund)
 if __name__ == "__main__":
     main()
