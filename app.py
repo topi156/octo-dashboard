@@ -968,7 +968,7 @@ def show_overview():
     if funds:
         rows = []
         for f in funds:
-            f_calls = [c for c in calls if c["fund_id"] == f["id"]]
+            f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
             f_dists = get_distributions(f["id"])
             f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
             total_called = f_metrics["total_called"]
