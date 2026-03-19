@@ -200,7 +200,8 @@ Return ONLY a valid JSON object with these exact keys (use null if a specific me
     "irr": number (Internal Rate of Return percentage, usually found under Gross IRR. e.g., 88% -> 88.0)
 }}
 
-IMPORTANT: Return ONLY the JSON, no markdown, no extra text. Ensure amounts are absolute numbers without commas.
+CRITICAL: Return ONLY the JSON object. No markdown code blocks, no backticks, no explanation text before or after. Just the raw JSON starting with {{ and ending with }}.
+
 REPORT TEXT:
 {report_text}"""
 
@@ -214,15 +215,43 @@ REPORT TEXT:
         "Content-Type": "application/json",
         "HTTP-Referer": "https://octo-dashboard.streamlit.app"
     }
-    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=90)
-    if resp.status_code != 200:
-        raise Exception(f"OpenRouter error {resp.status_code}: {resp.text[:300]}")
-    content = resp.json()["choices"][0]["message"]["content"].strip()
-    if "```" in content:
-        content = content.split("```")[1]
-        if content.startswith("json"):
-            content = content[4:]
-    return json.loads(content.strip())
+    
+    try:
+        resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=90)
+        if resp.status_code != 200:
+            raise Exception(f"OpenRouter error {resp.status_code}: {resp.text[:300]}")
+        
+        content = resp.json()["choices"][0]["message"]["content"].strip()
+        
+        # Clean up the response - remove markdown code blocks
+        if "```" in content:
+            # Extract content between code blocks
+            parts = content.split("```")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("json"):
+                    part = part[4:].strip()
+                if part.startswith("{") and part.endswith("}"):
+                    content = part
+                    break
+        
+        # Remove any leading/trailing whitespace and newlines
+        content = content.strip()
+        
+        # Find the first { and last }
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        if start != -1 and end > start:
+            content = content[start:end]
+        
+        # Parse JSON
+        result = json.loads(content)
+        return result
+        
+    except json.JSONDecodeError as e:
+        raise Exception(f"Failed to parse AI response as JSON: {str(e)}. Response was: {content[:200]}")
+    except Exception as e:
+        raise Exception(f"AI analysis failed: {str(e)}")
 
 st.set_page_config(
     page_title="ALT Group | Octo Dashboard",
