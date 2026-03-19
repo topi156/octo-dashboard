@@ -45,6 +45,10 @@ def calculate_xirr(cash_flows):
     cf_list.sort(key=lambda x: x[0])
     d0 = cf_list[0][0]
     
+    # PE Industry Standard: If portfolio is younger than 1 year, IRR is Not Meaningful (NM)
+    if (date.today() - d0).days < 365:
+        return "NM"
+    
     def xnpv(rate):
         if rate <= -1.0: return float('inf')
         return sum([a / ((1.0 + rate) ** ((d - d0).days / 365.25)) for d, a in cf_list])
