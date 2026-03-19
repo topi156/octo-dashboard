@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4.9 - app.py
-Master Version: Payment-Date Driven Alerts (No Future Call Checkbox Needed)
+OCTO FUND DASHBOARD v9.4.13 - app.py
+Master Version: AI Expenses Aggregation & Transparent Call Detail View
 """
 
 import streamlit as st
@@ -12,6 +12,7 @@ import io
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
+from collections import defaultdict
 from supabase import create_client, Client
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
@@ -19,15 +20,46 @@ OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
         return "—"
-    
     if 0 < amount <= 1000: 
         return f"{currency_sym}{amount:,.2f}M"
-    
     if amount >= 1_000_000:
         return f"{currency_sym}{amount/1_000_000:,.2f}M"
-    
     formatted = f"{currency_sym}{amount:,.0f}"
     return formatted
+
+def calculate_xirr(cash_flows):
+    """Calculates XIRR for an array of (date, amount) tuples."""
+    if not cash_flows: return None
+    
+    cf_dict = defaultdict(float)
+    for d, amt in cash_flows:
+        cf_dict[d] += amt
+    
+    cf_list = [(d, a) for d, a in cf_dict.items() if abs(a) > 0.01]
+    if not cf_list: return None
+    
+    has_pos = any(a > 0 for _, a in cf_list)
+    has_neg = any(a < 0 for _, a in cf_list)
+    if not (has_pos and has_neg): return None
+    
+    cf_list.sort(key=lambda x: x[0])
+    d0 = cf_list[0][0]
+    
+    def xnpv(rate):
+        if rate <= -1.0: return float('inf')
+        return sum([a / ((1.0 + rate) ** ((d - d0).days / 365.25)) for d, a in cf_list])
+        
+    rate = 0.1
+    for _ in range(100):
+        val = xnpv(rate)
+        val_delta = xnpv(rate + 0.0001)
+        deriv = (val_delta - val) / 0.0001
+        if deriv == 0: break
+        rate_next = rate - val / deriv
+        if abs(rate_next - rate) < 1e-6:
+            return rate_next
+        rate = rate_next
+    return None
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     import fitz
@@ -156,7 +188,7 @@ Return ONLY a valid JSON object with these exact keys (use 0 if a specific break
     "amount": total amount requested from the LP (number, e.g., 158889),
     "investments": amount allocated specifically to investments or capital commitment (number, e.g., 157143),
     "mgmt_fee": amount allocated to management fees (number),
-    "fund_expenses": amount allocated to fund expenses or reserve (number, e.g., 1746)
+    "fund_expenses": amount allocated to fund expenses, reserves, GP deemed contributions, or ANY other additional fees combined (number, e.g., 1746)
 }}
 
 IMPORTANT: Return ONLY the JSON, no markdown, no extra text. Ensure amounts are numbers without commas.
@@ -223,9 +255,7 @@ REPORT TEXT:
         
         content = resp.json()["choices"][0]["message"]["content"].strip()
         
-        # Clean up the response - remove markdown code blocks
         if "```" in content:
-            # Extract content between code blocks
             parts = content.split("```")
             for part in parts:
                 part = part.strip()
@@ -235,16 +265,13 @@ REPORT TEXT:
                     content = part
                     break
         
-        # Remove any leading/trailing whitespace and newlines
         content = content.strip()
         
-        # Find the first { and last }
         start = content.find("{")
         end = content.rfind("}") + 1
         if start != -1 and end > start:
             content = content[start:end]
         
-        # Parse JSON
         result = json.loads(content)
         return result
         
@@ -263,18 +290,14 @@ st.set_page_config(
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap');
-    
     * { font-family: 'Inter', sans-serif; }
-
     h1 { font-size: 24px !important; margin-bottom: 0.5rem !important; }
     h2 { font-size: 20px !important; }
     h3 { font-size: 18px !important; }
-    
     p, label, h1, h2, h3, h4, h5, h6, a, li, input, textarea, button, [data-testid="stMetricValue"] {
         font-family: 'Inter', sans-serif !important;
     }
     [data-testid="stExpander"] summary p { font-family: 'Inter', sans-serif !important; }
-
     [data-testid="stExpanderToggleIcon"], [data-testid="stExpanderToggleIcon"] *,
     [data-testid="stIconMaterial"], .material-symbols-rounded, .material-icons, i, svg {
         font-family: 'Material Symbols Rounded', 'Material Icons' !important;
@@ -283,12 +306,10 @@ st.markdown("""
         text-transform: none !important; letter-spacing: normal !important;
     }
     [data-testid="stExpanderToggleIcon"] { max-width: 24px !important; overflow: hidden !important; white-space: nowrap !important; }
-
     .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], section[data-testid="stSidebar"] + div { 
         background-color: #0f1117 !important; color: #e2e8f0 !important;
     }
     p, span, label, div { color: #e2e8f0; }
-
     [data-testid="stExpander"] summary { 
         color: #e2e8f0 !important; display: flex !important;
         align-items: center !important; gap: 8px !important;
@@ -297,7 +318,6 @@ st.markdown("""
         background: #1a1a2e !important; border: 1px solid #0f3460 !important;
         border-radius: 10px !important; margin-bottom: 8px !important;
     }
-
     [data-testid="stSelectbox"] > div > div, [data-testid="stSelectbox"] > div > div > div,
     [data-testid="stSelectbox"] span:not(.material-symbols-rounded) { 
         background-color: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important;
@@ -314,7 +334,6 @@ st.markdown("""
     [role="option"]:hover, [role="option"][aria-selected="true"] { background-color: #0f3460 !important; }
     [role="option"] * { color: #e2e8f0 !important; background-color: transparent !important; }
     li[class*="option"], div[class*="option"] { background-color: #1e293b !important; color: #e2e8f0 !important; }
-
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         border: 1px solid #0f3460; border-radius: 12px; padding: 12px; overflow: hidden;
@@ -325,23 +344,19 @@ st.markdown("""
     [data-testid="metric-container"] [data-testid="stMetricValue"] { 
         font-size: 0.95rem !important; 
     }
-    
     [data-testid="stMetricValue"] {
         color: #ffffff !important; font-weight: 700 !important; 
         white-space: nowrap !important;
         overflow: visible !important;
         line-height: 1.2 !important;
     }
-
     [data-testid="stSidebar"] { background: #0f1117 !important; }
     [data-testid="stTabs"] [role="tab"] { color: #94a3b8 !important; }
     [data-testid="stTabs"] [role="tab"][aria-selected="true"] { color: #ffffff !important; border-bottom-color: #3b82f6 !important; }
-
     [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
     [data-testid="stTextArea"] textarea, [data-testid="stDateInput"] input { 
         background: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important;
     }
-
     [data-testid="stDataFrame"] { color: #e2e8f0 !important; }
     [data-testid="stCaptionContainer"] { color: #94a3b8 !important; }
     hr { border-color: #1e293b !important; }
@@ -387,11 +402,14 @@ def generate_master_excel_bytes() -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         funds = get_funds()
+        all_calls = get_capital_calls()
+        all_dists = get_distributions()
+        
         if funds:
             funds_list = []
             for f in funds:
-                calls = get_capital_calls(f["id"])
-                dists = get_distributions(f["id"])
+                calls = [c for c in all_calls if c["fund_id"] == f["id"]]
+                dists = [d for d in all_dists if d["fund_id"] == f["id"]]
                 metrics = calculate_fund_metrics(f, calls, dists)
                 total_called = metrics["total_called"]
                 funds_list.append({
@@ -712,7 +730,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.9 | Intelligent Payment Alerts")
+        st.caption("Version 9.4.13 | Transparent Expenses")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -781,7 +799,8 @@ def show_overview():
 
     funds = get_funds()
     pipeline = get_pipeline_funds()
-    calls = get_capital_calls()
+    all_calls = get_capital_calls()
+    all_dists = get_distributions()
     all_reports = get_quarterly_reports(None)
 
     latest_reports = {}
@@ -796,8 +815,14 @@ def show_overview():
                     latest_reports[fid] = r
 
     total_commit_usd = 0
-    total_called_usd = 0
+    total_called_basis_usd = 0
+    total_uncalled_usd = 0
+    
+    total_paid_in_cash_usd = 0
+    total_dist_cash_usd = 0
     total_nav_usd = 0
+    
+    portfolio_cash_flows = []
 
     for f in funds:
         rate = st.session_state.eur_usd_rate if f.get("currency") == "EUR" else 1.0
@@ -807,79 +832,125 @@ def show_overview():
             c_val *= 1_000_000
         total_commit_usd += c_val * rate
         
-        f_calls = [c for c in calls if c["fund_id"] == f["id"]]
-        f_dists = get_distributions(f["id"])
+        f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
+        f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
+        
+        # Basis / Commitment Tracking
         metrics = calculate_fund_metrics(f, f_calls, f_dists)
         called = metrics["total_called"]
-        total_called_usd += called * rate
+        total_called_basis_usd += called * rate
+        total_uncalled_usd += metrics["uncalled"] * rate
         
+        # Cash Flow & Performance Tracking (LP Net Level)
+        fund_paid_in = 0
+        fund_dist = 0
+        
+        for c in f_calls:
+            if c.get("is_future"): continue
+            p_date_str = c.get("payment_date") or c.get("call_date")
+            if not p_date_str: continue
+            try:
+                p_date = datetime.strptime(str(p_date_str).split("T")[0], "%Y-%m-%d").date()
+                tx_type = c.get("transaction_type", "call")
+                # Amount represents the actual Cash Out, implicitly capturing expenses/fees
+                amt = float(c.get("amount") or 0) * rate
+                eq = float(c.get("equalisation_interest") or 0) * rate
+                
+                if tx_type == "call":
+                    flow = amt + eq
+                    fund_paid_in += flow
+                    portfolio_cash_flows.append((p_date, -flow))
+                elif tx_type == "repayment":
+                    fund_paid_in -= amt
+                    portfolio_cash_flows.append((p_date, amt))
+                elif tx_type == "distribution":
+                    fund_dist += amt
+                    portfolio_cash_flows.append((p_date, amt))
+            except: pass
+            
+        for d in f_dists:
+            d_date_str = d.get("dist_date")
+            if not d_date_str: continue
+            try:
+                d_date = datetime.strptime(str(d_date_str).split("T")[0], "%Y-%m-%d").date()
+                amt = float(d.get("amount") or 0) * rate
+                fund_dist += amt
+                portfolio_cash_flows.append((d_date, amt))
+            except: pass
+            
+        total_paid_in_cash_usd += fund_paid_in
+        total_dist_cash_usd += fund_dist
+
+        # NAV Evaluation
         if f["id"] in latest_reports:
             rvpi = float(latest_reports[f["id"]].get("rvpi") or 0.0)
             tvpi = float(latest_reports[f["id"]].get("tvpi") or 1.0)
             if rvpi > 0:
-                total_nav_usd += (called * rvpi) * rate
+                fund_nav = (called * rvpi) * rate
             else:
-                total_nav_usd += ((called * tvpi) - metrics["total_distributed"]) * rate
+                fund_nav = ((called * tvpi) - metrics["total_distributed"]) * rate
         else:
-            total_nav_usd += called * rate
+            fund_nav = called * rate
+            
+        total_nav_usd += fund_nav
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
+    # Process Portfolio Level Analytics
+    portfolio_cash_flows.append((date.today(), total_nav_usd))
+    portfolio_irr = calculate_xirr(portfolio_cash_flows)
+    portfolio_tvpi = (total_dist_cash_usd + total_nav_usd) / total_paid_in_cash_usd if total_paid_in_cash_usd > 0 else 0
+
+    st.markdown("##### 🏛️ Legal & Commitment (Basis)")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
         st.metric("Active Funds", len(funds))
-    with col2:
+    with c2:
         st.metric("Total Commitments (USD Eqv)", format_currency(total_commit_usd, "$"))
-    with col3:
-        st.metric("Total Called (Octo Base)", format_currency(total_called_usd, "$"))
-    with col4:
+    with c3:
+        st.metric("Total Called (Basis)", format_currency(total_called_basis_usd, "$"))
+    with c4:
+        st.metric("Uncalled Balance", format_currency(total_uncalled_usd, "$"))
+
+    st.markdown("##### 🚀 Cash & Performance (Net LP)")
+    c5, c6, c7, c8 = st.columns(4)
+    with c5:
+        st.metric("Total Paid-In (Cash Out)", format_currency(total_paid_in_cash_usd, "$"))
+    with c6:
         st.metric("Octo True NAV (USD Eqv)", format_currency(total_nav_usd, "$"))
+    with c7:
+        st.metric("Portfolio TVPI", f"{portfolio_tvpi:.2f}x" if portfolio_tvpi > 0 else "—")
+    with c8:
+        st.metric("Portfolio Net IRR", f"{portfolio_irr * 100:.1f}%" if portfolio_irr else "—")
 
     st.divider()
     col1, col2 = st.columns([2, 1])
 
     with col1:
         st.subheader("📋 Funds Status")
-    if funds:
-        rows = []
-        for f in funds:
-            f_calls = [c for c in calls if c["fund_id"] == f["id"]]
-            f_dists = get_distributions(f["id"])
-            f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
-            total_called = f_metrics["total_called"]
-            
-            c_val = float(f.get("commitment") or 0)
-            if 0 < c_val <= 1000:
-                c_val *= 1_000_000
+        if funds:
+            rows = []
+            for f in funds:
+                f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
+                f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
+                f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+                total_called = f_metrics["total_called"]
                 
-            pct = f"{total_called/c_val*100:.1f}%" if c_val > 0 else "—"
-            currency_sym = "€" if f.get("currency") == "EUR" else "$"
-            
-            # Calculate Octo NAV
-            octo_nav = 0
-            if f["id"] in latest_reports:
-                rep = latest_reports[f["id"]]
-                rvpi = float(rep.get('rvpi') or 0.0)
-                tvpi = float(rep.get('tvpi') or 1.0)
-                
-                if rvpi > 0:
-                    octo_nav = total_called * rvpi
-                else:
-                    octo_nav = total_called * tvpi - f_metrics["total_distributed"]
-            else:
-                # If no report, NAV = Total Called (assuming 1x multiple)
-                octo_nav = total_called
-            
-            rows.append({
-                "Fund": f["name"],
-                "Currency": f.get("currency", "USD"),
-                "Commitment": format_currency(c_val, currency_sym),
-                "Total Called": format_currency(total_called, currency_sym) if total_called > 0 else "—",
-                "Called %": pct,
-                "Octo NAV": format_currency(octo_nav, currency_sym) if octo_nav > 0 else "—",
-                "Status": f.get("status", "active").capitalize(),
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    else:
-        st.info("No funds in the system")
+                c_val = float(f.get("commitment") or 0)
+                if 0 < c_val <= 1000:
+                    c_val *= 1_000_000
+                    
+                pct = f"{total_called/c_val*100:.1f}%" if c_val > 0 else "—"
+                currency_sym = "€" if f.get("currency") == "EUR" else "$"
+                rows.append({
+                    "Fund": f["name"],
+                    "Currency": f.get("currency", "USD"),
+                    "Commitment": format_currency(c_val, currency_sym),
+                    "Total Called": format_currency(total_called, currency_sym) if total_called > 0 else "—",
+                    "Called %": pct,
+                    "Status": f.get("status", "active").capitalize(),
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No funds in the system")
 
     with col2:
         st.subheader("🔔 Upcoming Events")
@@ -887,7 +958,7 @@ def show_overview():
         upcoming_events = {}
         
         for f in funds:
-            f_calls = [c for c in calls if c["fund_id"] == f["id"]]
+            f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
             for c in f_calls:
                 if not c.get("payment_date"): continue
                 try:
@@ -983,8 +1054,8 @@ def show_overview():
                 
                 fund_nav = rep.get("nav") or 0
                 
-                f_calls = [c for c in calls if c["fund_id"] == f["id"]]
-                f_dists = get_distributions(f["id"])
+                f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
+                f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
                 octo_metrics = calculate_fund_metrics(f, f_calls, f_dists)
                 octo_called = octo_metrics["total_called"]
                 
@@ -1488,7 +1559,7 @@ def show_fund_detail(fund):
                 
                 with st.expander(
                     f"{icon} Call #{c.get('call_number')} | {c.get('payment_date','')} | "
-                    f"Wire/Amount: {format_currency(total_cash, currency_sym)} "
+                    f"Cash Amount: {format_currency(total_cash, currency_sym)} "
                     f"{'🔮' if c.get('is_future') else '✅'}", 
                     expanded=False
                 ):
@@ -1497,8 +1568,20 @@ def show_fund_detail(fund):
                         st.write(f"**Type:** {tx_type.capitalize()}")
                         st.write(f"Call Date: {c.get('call_date','')}")
                         st.write(f"Payment Date: {c.get('payment_date','')}")
-                        st.write(f"Cash Amount: {format_currency(float(c.get('amount',0)), currency_sym)}")
+                        st.write(f"Cash Amount (Total): {format_currency(float(c.get('amount',0)), currency_sym)}")
+                        
+                        inv_val = float(c.get('investments') or 0)
+                        if inv_val > 0:
+                            st.write(f"Commitment Impact: {format_currency(inv_val, currency_sym)}")
+                            
                     with col2:
+                        mgmt = float(c.get('mgmt_fee', 0))
+                        exp = float(c.get('fund_expenses', 0))
+                        if mgmt > 0:
+                            st.write(f"Mgmt Fee: {format_currency(mgmt, currency_sym)}")
+                        if exp > 0:
+                            st.write(f"Fund Expenses / Other: {format_currency(exp, currency_sym)}")
+                            
                         affects = c.get("affects_called")
                         affects_text = "Yes" if (affects or (affects is None and tx_type == "repayment")) else "No"
                         st.write(f"Reduces Total Called: {affects_text}")
@@ -1509,6 +1592,7 @@ def show_fund_detail(fund):
                         
                         if c.get('notes'):
                             st.write(f"Notes: {c.get('notes')}")
+                            
                     with col3:
                         if st.button("🗑️", key=f"del_call_{c['id']}", help="Delete Call"):
                             st.session_state[f"confirm_del_call_{c['id']}"] = True
@@ -1596,7 +1680,7 @@ def show_fund_detail(fund):
                 mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
                 
             with col3:
-                fund_expenses = st.number_input("Fund Expenses", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
+                fund_expenses = st.number_input("Fund Expenses & Other", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
                 
                 default_recall = (tx_type == "repayment")
                 is_recallable = st.checkbox(
@@ -2342,6 +2426,7 @@ def show_gantt(tasks, fund):
                         st.error(f"Error: {e}")
                 else:
                     st.error("Please enter a task name")
+
 def show_reports():
     st.title("📈 Reports & Analytics")
     
