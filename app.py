@@ -1,6 +1,6 @@
 """
-OCTO FUND DASHBOARD v9.4.13 - app.py
-Master Version: AI Expenses Aggregation & Transparent Call Detail View
+OCTO FUND DASHBOARD v9.4.14 - app.py
+Master Version: AI Expenses Aggregation, Transparent Calls & Fund Operating Expenses
 """
 
 import streamlit as st
@@ -565,6 +565,14 @@ def fetch_all_audit_logs(_sb):
 def get_audit_logs():
     return fetch_all_audit_logs(get_supabase())
 
+@st.cache_data(ttl=600)
+def fetch_all_operating_expenses(_sb):
+    try: return _sb.table("fund_operating_expenses").select("*").order("expense_date", desc=True).execute().data or []
+    except: return []
+
+def get_operating_expenses():
+    return fetch_all_operating_expenses(get_supabase())
+
 def check_and_show_alerts():
     if "dismissed_banners" not in st.session_state:
         st.session_state.dismissed_banners = set()
@@ -706,6 +714,7 @@ def main():
             "👥 Investors",
             "🔍 Pipeline",
             "📈 Reports",
+            "💼 Fund Expenses",
             "📋 Audit Logs"
         ], label_visibility="collapsed")
         
@@ -730,7 +739,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.13 | Transparent Expenses")
+        st.caption("Version 9.4.14 | True Net LP Analytics")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -761,6 +770,7 @@ def main():
     elif "Investors" in page: show_investors()
     elif "Pipeline" in page: show_pipeline()
     elif "Reports" in page: show_reports()
+    elif "Fund Expenses" in page: show_fund_expenses()
     elif "Audit Logs" in page: show_audit_logs()
 
 def show_audit_logs():
@@ -893,6 +903,22 @@ def show_overview():
             fund_nav = called * rate
             
         total_nav_usd += fund_nav
+
+    # Add operating expenses to cash flows
+    operating_expenses = get_operating_expenses()
+    total_operating_expenses_cash_usd = 0
+    for exp in operating_expenses:
+        exp_date_str = exp.get("expense_date")
+        if not exp_date_str: continue
+        try:
+            exp_date = datetime.strptime(str(exp_date_str).split("T")[0], "%Y-%m-%d").date()
+            rate = st.session_state.eur_usd_rate if exp.get("currency") == "EUR" else 1.0
+            amt = float(exp.get("amount", 0)) * rate
+            portfolio_cash_flows.append((exp_date, -amt))  # Expenses are negative
+            total_operating_expenses_cash_usd += amt
+        except: pass
+        
+    total_paid_in_cash_usd += total_operating_expenses_cash_usd
 
     # Process Portfolio Level Analytics
     portfolio_cash_flows.append((date.today(), total_nav_usd))
@@ -1389,1043 +1415,162 @@ def show_investors():
                                 st.rerun()
                     st.divider()
 
-def show_portfolio():
-    st.title("📁 Portfolio")
+def show_fund_expenses():
+    st.title("💼 Fund Operating Expenses")
     
-    with st.expander("➕ Add New Fund to Portfolio"):
-        with st.form("add_new_fund_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                new_name = st.text_input("Fund Name")
-                new_manager = st.text_input("Manager")
-                strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
-                new_strategy = st.selectbox("Strategy", strategy_opts)
-                new_geo = st.text_input("Geographic Focus")
-            with col2:
-                new_commitment = st.number_input("Commitment Amount", min_value=0.0, step=500000.0)
-                new_currency = st.selectbox("Currency", ["USD", "EUR"])
-                new_date = st.date_input("Investment Date")
-                status_opts = ["active", "closed", "exited"]
-                new_status = st.selectbox("Status", status_opts)
-                
-            if st.form_submit_button("💾 Save New Fund", type="primary"):
-                try:
-                    get_supabase().table("funds").insert({
-                        "name": new_name,
-                        "manager": new_manager,
-                        "strategy": new_strategy,
-                        "geographic_focus": new_geo,
-                        "commitment": new_commitment,
-                        "currency": new_currency,
-                        "vintage_year": new_date.year,
-                        "investment_date": str(new_date),
-                        "status": new_status
-                    }).execute()
-                    st.success("✅ New fund successfully added! It now appears in the tabs below.")
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-    funds = get_funds()
-    if not funds:
-        st.info("No funds in the system")
-        return
+    st.markdown("""
+    <div class="dashboard-header">
+    <h1 style="color:white;margin:0;">💼 Octo Fund Operating Expenses</h1>
+    <p style="color:#94a3b8;margin:4px 0 0 0;">Track all operational expenses outside capital calls</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    tabs = st.tabs([f["name"] for f in funds])
-    for i, fund in enumerate(funds):
-        with tabs[i]:
-            show_fund_detail(fund)
-
-def show_fund_detail(fund):
-    calls = get_capital_calls(fund["id"])
-    dists = get_distributions(fund["id"])
-    reports = get_quarterly_reports(fund["id"])
-
-    metrics = calculate_fund_metrics(fund, calls, dists)
+    sb = get_supabase()
+    expenses = get_operating_expenses()
     
-    commitment = metrics["commitment"]
-    total_called = metrics["total_called"]
-    total_dist = metrics["total_distributed"]
-    uncalled = metrics["uncalled"]
-    currency_sym = "€" if fund.get("currency") == "EUR" else "$"
-
-    col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
+    # Summary metrics
+    total_expenses_usd = 0
+    expenses_by_category = {}
+    
+    for exp in expenses:
+        rate = st.session_state.eur_usd_rate if exp.get("currency") == "EUR" else 1.0
+        amt = float(exp.get("amount", 0)) * rate
+        total_expenses_usd += amt
+        
+        cat = exp.get("category", "Other")
+        expenses_by_category[cat] = expenses_by_category.get(cat, 0) + amt
+    
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Commitment", format_currency(commitment, currency_sym))
+        st.metric("Total Operating Expenses", format_currency(total_expenses_usd, "$"))
     with col2:
-        pct = f"{total_called/commitment*100:.1f}%" if commitment > 0 else "—"
-        st.metric("Total Called", format_currency(total_called, currency_sym), pct)
+        st.metric("Number of Expenses", len(expenses))
     with col3:
-        st.metric("Uncalled Balance", format_currency(uncalled, currency_sym))
-    with col4:
-        st.metric("Total Distributed", format_currency(total_dist, currency_sym))
-    with col_edit:
-        if st.button("✏️ Edit", key=f"edit_fund_{fund['id']}"):
-            st.session_state[f"editing_fund_{fund['id']}"] = True
-    with col_del:
-        if st.button("🗑️ Delete", key=f"del_fund_{fund['id']}"):
-            st.session_state[f"confirm_del_fund_{fund['id']}"] = True
-
-    if st.session_state.get(f"confirm_del_fund_{fund['id']}"):
-        st.warning(f"⚠️ Delete '{fund['name']}'? All associated Calls, Distributions, and Reports will also be deleted.")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("✅ Yes, Delete All", key=f"yes_fund_{fund['id']}", type="primary"):
-                try:
-                    sb = get_supabase()
-                    log_action("DELETE", "funds", f"Deleted fund '{fund['name']}' including all its data", fund)
-                    sb.table("capital_calls").delete().eq("fund_id", fund["id"]).execute()
-                    sb.table("distributions").delete().eq("fund_id", fund["id"]).execute()
-                    sb.table("quarterly_reports").delete().eq("fund_id", fund["id"]).execute()
-                    sb.table("funds").delete().eq("id", fund["id"]).execute()
-                    st.success("Deleted!")
-                    st.session_state.pop(f"confirm_del_fund_{fund['id']}", None)
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        with c2:
-            if st.button("❌ Cancel", key=f"no_fund_{fund['id']}"):
-                st.session_state.pop(f"confirm_del_fund_{fund['id']}", None)
-                st.rerun()
-
-    if st.session_state.get(f"editing_fund_{fund['id']}"):
-        with st.form(f"edit_fund_form_{fund['id']}"):
-            st.markdown("**✏️ Edit Fund Details**")
+        if expenses_by_category:
+            top_cat = max(expenses_by_category, key=expenses_by_category.get)
+            st.metric("Top Category", f"{top_cat}")
+    
+    st.divider()
+    
+    # Add new expense
+    with st.expander("➕ Add Operating Expense"):
+        with st.form("add_expense_form"):
             col1, col2 = st.columns(2)
             with col1:
-                new_name = st.text_input("Fund Name", value=fund.get("name",""))
-                new_manager = st.text_input("Manager", value=fund.get("manager","") or "")
-                strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
-                cur_s = fund.get("strategy","Growth")
-                new_strategy = st.selectbox("Strategy", strategy_opts,
-                    index=strategy_opts.index(cur_s) if cur_s in strategy_opts else 0)
-                new_geo = st.text_input("Geographic Focus", value=fund.get("geographic_focus","") or "")
-            with col2:
-                new_commitment = st.number_input("Commitment", value=float(commitment), min_value=0.0, step=500000.0)
-                
-                cur_cur = fund.get("currency","USD")
-                new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_cur=="USD" else 1)
-                status_opts = ["active","closed","exited"]
-                cur_st = fund.get("status","active")
-                new_status = st.selectbox("Status", status_opts,
-                    index=status_opts.index(cur_st) if cur_st in status_opts else 0)
-                
-                cur_date = fund.get("investment_date")
-                try:
-                    default_date = datetime.fromisoformat(str(cur_date)).date() if cur_date else date(int(fund.get("vintage_year") or 2020), 1, 1)
-                except:
-                    default_date = date.today()
-                new_inv_date = st.date_input("Investment Date", value=default_date)
-
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.form_submit_button("💾 Save", type="primary"):
-                    try:
-                        log_action("UPDATE", "funds", f"Updated fund details: {fund['name']}", fund)
-                        get_supabase().table("funds").update({
-                            "name": new_name, "manager": new_manager,
-                            "strategy": new_strategy, "commitment": new_commitment,
-                            "currency": new_currency, "status": new_status,
-                            "vintage_year": new_inv_date.year,
-                            "geographic_focus": new_geo,
-                            "investment_date": str(new_inv_date)
-                        }).eq("id", fund["id"]).execute()
-                        st.success("✅ Updated!")
-                        st.session_state.pop(f"editing_fund_{fund['id']}", None)
-                        clear_cache_and_rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-            with c2:
-                if st.form_submit_button("❌ Cancel"):
-                    st.session_state.pop(f"editing_fund_{fund['id']}", None)
-                    st.rerun()
-
-    st.divider()
-    tab1, tab2, tab3 = st.tabs(["📞 Capital Calls", "💰 Distributions", "📊 Performance"])
-
-    with tab1:
-        if calls:
-            st.markdown("**Capital Calls List**")
-            for c in calls:
-                tx_icons = {
-                    "call": "💰",
-                    "repayment": "🔄",
-                    "distribution": "📤"
-                }
-                tx_type = c.get("transaction_type", "call")
-                icon = "🔮" if c.get("is_future") else tx_icons.get(tx_type, "💰")
-                
-                total_cash = float(c.get("amount", 0)) + float(c.get("equalisation_interest", 0))
-                
-                with st.expander(
-                    f"{icon} Call #{c.get('call_number')} | {c.get('payment_date','')} | "
-                    f"Cash Amount: {format_currency(total_cash, currency_sym)} "
-                    f"{'🔮' if c.get('is_future') else '✅'}", 
-                    expanded=False
-                ):
-                    col1, col2, col3 = st.columns([2,2,1])
-                    with col1:
-                        st.write(f"**Type:** {tx_type.capitalize()}")
-                        st.write(f"Call Date: {c.get('call_date','')}")
-                        st.write(f"Payment Date: {c.get('payment_date','')}")
-                        st.write(f"Cash Amount (Total): {format_currency(float(c.get('amount',0)), currency_sym)}")
-                        
-                        inv_val = float(c.get('investments') or 0)
-                        if inv_val > 0:
-                            st.write(f"Commitment Impact: {format_currency(inv_val, currency_sym)}")
-                            
-                    with col2:
-                        mgmt = float(c.get('mgmt_fee', 0))
-                        exp = float(c.get('fund_expenses', 0))
-                        if mgmt > 0:
-                            st.write(f"Mgmt Fee: {format_currency(mgmt, currency_sym)}")
-                        if exp > 0:
-                            st.write(f"Fund Expenses / Other: {format_currency(exp, currency_sym)}")
-                            
-                        affects = c.get("affects_called")
-                        affects_text = "Yes" if (affects or (affects is None and tx_type == "repayment")) else "No"
-                        st.write(f"Reduces Total Called: {affects_text}")
-                        
-                        eq_interest = float(c.get('equalisation_interest', 0))
-                        if eq_interest > 0:
-                            st.write(f"⚠️ Equalisation Interest: {format_currency(eq_interest, currency_sym)}")
-                        
-                        if c.get('notes'):
-                            st.write(f"Notes: {c.get('notes')}")
-                            
-                    with col3:
-                        if st.button("🗑️", key=f"del_call_{c['id']}", help="Delete Call"):
-                            st.session_state[f"confirm_del_call_{c['id']}"] = True
-                        
-                    if st.session_state.get(f"confirm_del_call_{c['id']}"):
-                        st.warning("Delete this Call?")
-                        cc1, cc2 = st.columns(2)
-                        with cc1:
-                            if st.button("✅ Delete", key=f"yes_call_{c['id']}"):
-                                try:
-                                    log_action("DELETE", "capital_calls", f"Deleted Capital Call #{c.get('call_number')} from {fund['name']}", c)
-                                    get_supabase().table("capital_calls").delete().eq("id", c["id"]).execute()
-                                    clear_cache_and_rerun()
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
-                        with cc2:
-                            if st.button("❌ Cancel", key=f"no_call_{c['id']}"):
-                                st.session_state.pop(f"confirm_del_call_{c['id']}", None)
-                                st.rerun()
-
-            chart_data = [c for c in calls if not c.get("is_future") and c.get("transaction_type") == "call" and (c.get("amount") or c.get("investments"))]
-            if chart_data:
-                fig = px.bar(
-                    x=[f"Call #{c['call_number']}" for c in chart_data],
-                    y=[float(c.get("investments") if float(c.get("investments",0)) > 0 else c.get("amount",0)) for c in chart_data],
-                    labels={"x": "Call", "y": f"Commitment Impact ({fund.get('currency','USD')})"},
-                    title="Capital Calls History (Commitment Usage)",
-                    color_discrete_sequence=["#0f3460"]
-                )
-                fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
-                st.plotly_chart(fig, use_container_width=True, key=f"calls_chart_{fund['id']}")
-        else:
-            st.info("No Capital Calls yet")
-
-        st.divider()
-        st.markdown("**🤖 Add Capital Call from PDF (AI Extraction)**")
-        uploaded_cc_pdf = st.file_uploader("Upload Capital Call Notice (PDF)", type=["pdf"], key=f"cc_uploader_{fund['id']}")
-        
-        if uploaded_cc_pdf:
-            if st.button("Analyze Document Now", type="primary", key=f"cc_analyze_btn_{fund['id']}"):
-                with st.spinner("Claude is analyzing the document..."):
-                    try:
-                        cc_bytes = uploaded_cc_pdf.read()
-                        ai_result = analyze_capital_call_pdf_with_ai(cc_bytes)
-                        st.session_state[f"cc_ai_result_{fund['id']}"] = ai_result
-                        st.success("✅ Data extracted successfully! Please review and confirm in the form below.")
-                    except Exception as e:
-                        st.error(f"Error analyzing document: {e}")
-        
-        st.divider()
-        st.markdown("**➕ Or Enter Details Manually**")
-        
-        ai_data = st.session_state.get(f"cc_ai_result_{fund['id']}", {})
-        
-        def_call_date = date.today()
-        if ai_data.get("call_date"):
-            try: def_call_date = datetime.strptime(ai_data["call_date"], "%Y-%m-%d").date()
-            except: pass
+                exp_date = st.date_input("Expense Date")
+                category_options = [
+                    "Legal (Walker)", 
+                    "Accounting (SAP)", 
+                    "Tax (KPMG)", 
+                    "Insurance", 
+                    "Fund Admin (Zur)",
+                    "Setup Fees",
+                    "Other Professional Fees"
+                ]
+                category = st.selectbox("Category", category_options)
+                description = st.text_input("Description")
             
-        def_pay_date = date.today()
-        if ai_data.get("payment_date"):
-            try: def_pay_date = datetime.strptime(ai_data["payment_date"], "%Y-%m-%d").date()
-            except: pass
-
-        with st.form(f"add_call_{fund['id']}"):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                call_num = st.number_input("Call Number", min_value=1, value=len(calls)+1)
-                call_date = st.date_input("Call Date", value=def_call_date)
-                payment_date = st.date_input("Payment Date", value=def_pay_date)
-                
-                tx_type = st.selectbox(
-                    "Transaction Type",
-                    ["call", "repayment", "distribution"],
-                    format_func=lambda x: {
-                        "call": "💰 Capital Call",
-                        "repayment": "🔄 Capital Repayment (Recallable)",
-                        "distribution": "📤 Capital Distribution (Non-recallable)"
-                    }[x]
-                )
-                
             with col2:
-                amount = st.number_input("Cash Amount (Net Call)", min_value=0.0, value=float(ai_data.get("amount", 0)))
-                investments = st.number_input("Investments (Commitment Impact)", min_value=0.0, value=float(ai_data.get("investments", 0)))
-                mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
-                
-            with col3:
-                fund_expenses = st.number_input("Fund Expenses & Other", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
-                
-                default_recall = (tx_type == "repayment")
-                is_recallable = st.checkbox(
-                    "Reduces Total Called", 
-                    value=default_recall,
-                    help="Check if this amount reduces the Total Called (usually True for Repayment, False for Distribution)"
-                )
-                
-                equalisation_interest = st.number_input(
-                    "Equalisation Interest", 
-                    min_value=0.0, 
-                    value=0.0,
-                    help="Interest paid by late entrants - does NOT count toward Total Called"
-                )
-                
-                is_future = st.checkbox("Future Call (Show Alert)")
-                notes = st.text_input("Notes")
-                
-            if st.form_submit_button("Save Call to System", type="primary"):
-                try:
-                    get_supabase().table("capital_calls").insert({
-                        "fund_id": fund["id"], 
-                        "call_number": call_num,
-                        "call_date": str(call_date), 
-                        "payment_date": str(payment_date),
-                        "transaction_type": tx_type,
-                        "amount": amount, 
-                        "investments": investments,
-                        "mgmt_fee": mgmt_fee, 
-                        "fund_expenses": fund_expenses,
-                        "is_recallable": is_recallable,
-                        "affects_called": is_recallable,
-                        "equalisation_interest": equalisation_interest,
-                        "is_future": is_future, 
-                        "notes": notes
-                    }).execute()
-                                
-                    st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
-                    st.success("✅ Saved!")
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-    with tab2:
-        if dists:
-            st.markdown("**Distributions List**")
-            for d in dists:
-                with st.expander(f"Dist #{d.get('dist_number')} | {d.get('dist_date','')} | {format_currency(float(d.get('amount',0)), currency_sym)}", expanded=False):
-                    col1, col2 = st.columns([4,1])
-                    with col1:
-                        st.write(f"Type: {d.get('dist_type','').capitalize()} | Amount: {format_currency(float(d.get('amount',0)), currency_sym)}")
-                    with col2:
-                        if st.button("🗑️", key=f"del_dist_{d['id']}", help="Delete Distribution"):
-                            st.session_state[f"confirm_del_dist_{d['id']}"] = True
-                    if st.session_state.get(f"confirm_del_dist_{d['id']}"):
-                        st.warning("Delete this Distribution?")
-                        dc1, dc2 = st.columns(2)
-                        with dc1:
-                            if st.button("✅ Delete", key=f"yes_dist_{d['id']}"):
-                                try:
-                                    log_action("DELETE", "distributions", f"Deleted distribution #{d.get('dist_number')} from {fund['name']}", d)
-                                    get_supabase().table("distributions").delete().eq("id", d["id"]).execute()
-                                    clear_cache_and_rerun()
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
-                        with dc2:
-                            if st.button("❌ Cancel", key=f"no_dist_{d['id']}"):
-                                st.session_state.pop(f"confirm_del_dist_{d['id']}", None)
-                                st.rerun()
-        else:
-            st.info("No distributions yet")
-
-        st.divider()
-        st.markdown("**➕ Add Distribution**")
-        with st.form(f"add_dist_{fund['id']}"):
-            col1, col2 = st.columns(2)
-            with col1:
-                dist_num = st.number_input("Number", min_value=1, value=len(dists)+1)
-                dist_date = st.date_input("Date")
-            with col2:
-                dist_amount = st.number_input("Amount", min_value=0.0)
-                dist_type = st.selectbox("Type", ["income", "capital", "recycle"])
-            if st.form_submit_button("Save", type="primary"):
-                try:
-                    get_supabase().table("distributions").insert({
-                        "fund_id": fund["id"], "dist_number": dist_num,
-                        "dist_date": str(dist_date), "amount": dist_amount, "dist_type": dist_type.lower()
-                    }).execute()
-                    st.success("✅ Saved!")
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-    with tab3:
-        if reports:
-            st.markdown("**Quarterly Reports**")
-            for r in reports:
-                with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
-                    col1, col_edit, col_del = st.columns([3, 1, 1])
-                    with col1:
-                        st.write(f"NAV (Fund): {format_currency(float(r.get('nav',0)), currency_sym)} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
-                        if r.get('notes'):
-                            st.write(f"Notes: {r.get('notes')}")
-                    with col_edit:
-                        if st.button("✏️ Edit", key=f"edit_rep_btn_{r['id']}"):
-                            st.session_state[f"editing_rep_{r['id']}"] = True
-                    with col_del:
-                        if st.button("🗑️ Delete", key=f"del_rep_btn_{r['id']}"):
-                            st.session_state[f"confirm_del_rep_{r['id']}"] = True
-                            
-                    if st.session_state.get(f"confirm_del_rep_{r['id']}"):
-                        st.warning("Delete this report?")
-                        rc1, rc2 = st.columns(2)
-                        with rc1:
-                            if st.button("✅ Yes, Delete", key=f"yes_rep_{r['id']}"):
-                                try:
-                                    log_action("DELETE", "quarterly_reports", f"Deleted report Q{r['quarter']}/{r['year']} of {fund['name']}", r)
-                                    get_supabase().table("quarterly_reports").delete().eq("id", r["id"]).execute()
-                                    st.session_state.pop(f"confirm_del_rep_{r['id']}", None)
-                                    clear_cache_and_rerun()
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
-                        with rc2:
-                            if st.button("❌ Cancel", key=f"no_rep_{r['id']}"):
-                                st.session_state.pop(f"confirm_del_rep_{r['id']}", None)
-                                st.rerun()
-
-                    if st.session_state.get(f"editing_rep_{r['id']}"):
-                        with st.form(f"edit_rep_form_{r['id']}"):
-                            st.markdown("**✏️ Edit Report Details**")
-                            e_c1, e_c2, e_c3 = st.columns(3)
-                            with e_c1:
-                                edit_year = st.number_input("Year", value=int(r['year']), min_value=2020, max_value=2030)
-                                edit_quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(int(r['quarter'])))
-                                try:
-                                    def_rep_date = datetime.fromisoformat(str(r['report_date'])).date() if r.get('report_date') else date.today()
-                                except:
-                                    def_rep_date = date.today()
-                                edit_rep_date = st.date_input("Report Date", value=def_rep_date)
-                            with e_c2:
-                                edit_nav = st.number_input("NAV (Fund Level)", value=float(r.get('nav') or 0.0), min_value=0.0)
-                                edit_tvpi = st.number_input("TVPI", value=float(r.get('tvpi') or 0.0), step=0.01, format="%.2f")
-                                edit_dpi = st.number_input("DPI", value=float(r.get('dpi') or 0.0), step=0.01, format="%.2f")
-                            with e_c3:
-                                edit_rvpi = st.number_input("RVPI", value=float(r.get('rvpi') or 0.0), step=0.01, format="%.2f")
-                                edit_irr = st.number_input("IRR %", value=float(r.get('irr') or 0.0), step=0.1, format="%.1f")
-                                edit_notes = st.text_area("Notes", value=r.get('notes') or "")
-                            
-                            save_c1, save_c2 = st.columns(2)
-                            with save_c1:
-                                if st.form_submit_button("💾 Save Changes", type="primary"):
-                                    try:
-                                        log_action("UPDATE", "quarterly_reports", f"Updated report Q{r['quarter']}/{r['year']}", r)
-                                        get_supabase().table("quarterly_reports").update({
-                                            "year": edit_year, "quarter": edit_quarter,
-                                            "report_date": str(edit_rep_date), "nav": edit_nav,
-                                            "tvpi": edit_tvpi, "dpi": edit_dpi, "rvpi": edit_rvpi, 
-                                            "irr": edit_irr, "notes": edit_notes
-                                        }).eq("id", r["id"]).execute()
-                                        st.session_state.pop(f"editing_rep_{r['id']}", None)
-                                        clear_cache_and_rerun()
-                                    except Exception as e:
-                                        st.error(f"Error: {e}")
-                            with save_c2:
-                                if st.form_submit_button("❌ Close"):
-                                    st.session_state.pop(f"editing_rep_{r['id']}", None)
-                                    st.rerun()
-
-            if len(reports) > 1:
-                labels = [f"Q{r['quarter']}/{r['year']}" for r in reports]
-                fig = go.Figure()
-                if any(r.get("tvpi") for r in reports):
-                    fig.add_trace(go.Scatter(x=labels, y=[float(r.get("tvpi")) for r in reports], name="TVPI", line=dict(color="#4ade80")))
-                if any(r.get("dpi") for r in reports):
-                    fig.add_trace(go.Scatter(x=labels, y=[float(r.get("dpi")) for r in reports], name="DPI", line=dict(color="#60a5fa")))
-                fig.update_layout(title="Performance Over Time", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
-                st.plotly_chart(fig, use_container_width=True, key=f"perf_chart_{fund['id']}")
-        else:
-            st.info("No quarterly reports for this fund yet.")
-
-        st.divider()
-        st.markdown("**🤖 Add Quarterly Report from File (AI Extraction)**")
-        uploaded_rep_file = st.file_uploader("Upload Quarterly Report (PDF / Excel / CSV)", type=["pdf", "xlsx", "xls", "csv"], key=f"rep_uploader_{fund['id']}")
-        
-        if uploaded_rep_file:
-            if st.button("Analyze Document Now", type="primary", key=f"rep_analyze_btn_{fund['id']}"):
-                with st.spinner("Claude is analyzing the report..."):
-                    try:
-                        file_bytes = uploaded_rep_file.read()
-                        file_name = uploaded_rep_file.name
-                        if file_name.lower().endswith('.pdf'):
-                            rep_text = extract_pdf_text(file_bytes)
-                        else:
-                            if file_name.lower().endswith('.csv'):
-                                df = pd.read_csv(io.BytesIO(file_bytes))
-                            else:
-                                df = pd.read_excel(io.BytesIO(file_bytes))
-                            rep_text = df.to_string(index=False)
-                            if len(rep_text) > 12000:
-                                rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
-                        
-                        ai_result = analyze_quarterly_report_with_ai(rep_text)
-                        st.session_state[f"rep_ai_result_{fund['id']}"] = ai_result
-                        st.success("✅ Data extracted successfully! Please review and confirm in the form below.")
-                    except Exception as e:
-                        st.error(f"Error analyzing document: {e}. (If Excel, ensure openpyxl is in requirements.txt)")
-
-        st.divider()
-        st.markdown("**➕ Or Enter Details Manually**")
-        
-        ai_rep = st.session_state.get(f"rep_ai_result_{fund['id']}", {})
-        
-        def_year = int(ai_rep.get("year")) if ai_rep.get("year") else 2025
-        def_quarter = int(ai_rep.get("quarter")) if ai_rep.get("quarter") in [1,2,3,4] else 1
-        
-        def_rep_date = date.today()
-        if ai_rep.get("report_date"):
-            try: def_rep_date = datetime.strptime(ai_rep["report_date"], "%Y-%m-%d").date()
-            except: pass
-
-        with st.form(f"add_report_{fund['id']}"):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                year = st.number_input("Year", value=def_year, min_value=2020, max_value=2030)
-                quarter = st.selectbox("Quarter", [1, 2, 3, 4], index=[1,2,3,4].index(def_quarter))
-                report_date = st.date_input("Report Date", value=def_rep_date)
-            with col2:
-                nav = st.number_input("NAV (Fund Level)", min_value=0.0, value=float(ai_rep.get("nav") or 0.0))
-                tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("tvpi") or 0.0))
-                dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("dpi") or 0.0))
-            with col3:
-                rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("rvpi") or 0.0))
-                irr = st.number_input("IRR %", step=0.1, format="%.1f", value=float(ai_rep.get("irr") or 0.0))
-                notes = st.text_area("Notes")
-                
-            if st.form_submit_button("Save Report", type="primary"):
-                try:
-                    get_supabase().table("quarterly_reports").upsert({
-                        "fund_id": fund["id"], "year": year, "quarter": quarter,
-                        "report_date": str(report_date), "nav": nav,
-                        "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes
-                    }).execute()
-                    
-                    st.session_state.pop(f"rep_ai_result_{fund['id']}", None)
-                    st.success("✅ Saved!")
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-def show_pipeline():
-    st.title("🔍 Pipeline Funds")
-    pipeline = get_pipeline_funds()
-
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col2:
-        if st.button("➕ Add Manually", use_container_width=True):
-            st.session_state.show_add_pipeline = True
-            st.session_state.show_pdf_upload = False
-    with col3:
-        if st.button("📄 Upload PDF", type="primary", use_container_width=True):
-            st.session_state.show_pdf_upload = True
-            st.session_state.show_add_pipeline = False
-
-    if st.session_state.get("show_pdf_upload"):
-        st.divider()
-        st.markdown("### 📄 Automatic PDF Analysis")
-        uploaded_pdf = st.file_uploader("Upload Fund Pitch Deck (PDF)", type=["pdf"], key="pdf_uploader")
-        if uploaded_pdf:
-            if st.button("🤖 Analyze with AI", type="primary"):
-                with st.spinner("Claude is analyzing the presentation... (30-60 seconds)"):
-                    try:
-                        pdf_bytes = uploaded_pdf.read()
-                        result = analyze_pdf_with_ai(pdf_bytes)
-                        st.session_state.pdf_result = result
-                        st.success("✅ Analysis complete!")
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-        if st.session_state.get("pdf_result"):
-            r = st.session_state.pdf_result
-            st.divider()
-            st.markdown("### 📋 Extracted Details – Review and Confirm")
-            if r.get("key_highlights"):
-                st.info(f"💡 {r.get('key_highlights')}")
-            with st.form("pdf_pipeline_form"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    fund_name = st.text_input("Fund Name", value=r.get("fund_name") or "")
-                    manager = st.text_input("Manager", value=r.get("manager") or "")
-                    strategy_options = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
-                    ai_strategy = r.get("strategy", "Growth")
-                    strategy_idx = strategy_options.index(ai_strategy) if ai_strategy in strategy_options else 0
-                    strategy = st.selectbox("Strategy", strategy_options, index=strategy_idx)
-                    geographic = st.text_input("Geographic Focus", value=r.get("geographic_focus") or "")
-                    sector = st.text_input("Sector Focus", value=r.get("sector_focus") or "")
-                with col2:
-                    fund_size = r.get("fund_size_target") or 0
-                    target_commitment = st.number_input("Our Target Commitment", min_value=0.0, value=0.0, step=500000.0)
-                    currency = st.selectbox("Currency", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
-                    target_close = st.date_input("Target Close Date")
-                    
-                    priority_opts = ["High", "Medium", "Low"]
-                    priority_ui = st.selectbox("Priority", priority_opts, index=1)
-                    
-                st.divider()
-                st.markdown("**📊 Fund Metrics (For Documentation)**")
-                col3, col4, col5 = st.columns(3)
-                with col3:
-                    st.metric("Target Size", f"${fund_size:,.0f}M" if fund_size else "—")
-                    hard_cap = r.get("fund_size_hard_cap")
-                    st.metric("Hard Cap", f"${hard_cap:,.0f}M" if hard_cap else "—")
-                with col4:
-                    moic_low = r.get("target_return_moic_low")
-                    moic_high = r.get("target_return_moic_high")
-                    st.metric("Target MOIC", f"{moic_low}x-{moic_high}x" if moic_low and moic_high else "—")
-                    irr = r.get("target_irr_gross")
-                    st.metric("Target Gross IRR", f"{irr}%" if irr else "—")
-                with col5:
-                    mgmt = r.get("mgmt_fee_pct")
-                    carry = r.get("carried_interest_pct")
-                    hurdle = r.get("preferred_return_pct")
-                    st.metric("Mgmt Fee", f"{mgmt}%" if mgmt else "—")
-                    st.metric("Carry / Hurdle", f"{carry}% / {hurdle}%" if carry and hurdle else "—")
-                
-                aum_str = f" | Manager AUM: ${r.get('aum_manager')}B" if r.get("aum_manager") else ""
-                irr_str = f" | IRR: {r.get('target_irr_gross')}%" if r.get("target_irr_gross") else ""
-                moic_str = f" | MOIC: {r.get('target_return_moic_low')}x-{r.get('target_return_moic_high')}x" if r.get("target_return_moic_low") else ""
-                notes_default = f"Fund Size: ${fund_size:,.0f}M{moic_str}{irr_str}{aum_str}" if fund_size else ""
-                notes = st.text_area("Notes", value=notes_default)
-                
-                if st.form_submit_button("✅ Create Pipeline Fund + Gantt", type="primary"):
-                    try:
-                        sb = get_supabase()
-                        res = sb.table("pipeline_funds").insert({
-                            "name": fund_name, "manager": manager, "strategy": strategy,
-                            "target_commitment": target_commitment,
-                            "currency": currency, "target_close_date": str(target_close),
-                            "priority": priority_ui.lower(), "notes": notes
-                        }).execute()
-                        fund_id = res.data[0]["id"]
-                        try:
-                            sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
-                        except:
-                            pass
-                        st.success(f"✅ Fund '{fund_name}' created!")
-                        st.session_state.pdf_result = None
-                        st.session_state.show_pdf_upload = False
-                        clear_cache_and_rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-
-    if st.session_state.get("show_add_pipeline"):
-        st.divider()
-        with st.form("add_pipeline_manual"):
-            st.markdown("### ➕ Manual Addition")
-            col1, col2 = st.columns(2)
-            with col1:
-                name = st.text_input("Fund Name")
-                manager = st.text_input("Manager")
-                strategy = st.selectbox("Strategy", ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"])
-            with col2:
-                target_commitment_input = st.number_input("Target Commitment", min_value=0.0, value=0.0, step=500000.0)
+                amount = st.number_input("Amount", min_value=0.0, step=100.0)
                 currency = st.selectbox("Currency", ["USD", "EUR"])
-                target_close = st.date_input("Closing Date")
-                
-                priority_opts = ["High", "Medium", "Low"]
-                priority_ui = st.selectbox("Priority", priority_opts, index=1)
-                
-            notes = st.text_area("Notes")
-            if st.form_submit_button("Create Fund + Gantt", type="primary"):
+                is_one_time = st.checkbox("One-time expense")
+            
+            if st.form_submit_button("💾 Save Expense", type="primary"):
                 try:
-                    sb = get_supabase()
-                    res = sb.table("pipeline_funds").insert({
-                        "name": name, "manager": manager, "strategy": strategy,
-                        "target_commitment": target_commitment_input, "currency": currency,
-                        "target_close_date": str(target_close), "priority": priority_ui.lower(), "notes": notes
+                    sb.table("fund_operating_expenses").insert({
+                        "expense_date": str(exp_date),
+                        "category": category,
+                        "description": description,
+                        "amount": amount,
+                        "currency": currency,
+                        "is_one_time": is_one_time
                     }).execute()
-                    fund_id = res.data[0]["id"]
-                    try:
-                        sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
-                    except:
-                        pass
-                    st.success(f"✅ Fund '{name}' created!")
-                    st.session_state.show_add_pipeline = False
+                    log_action("INSERT", "fund_operating_expenses", f"Added expense: {category} - {description}", {})
+                    st.success("✅ Expense added!")
                     clear_cache_and_rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
-
+    
     st.divider()
-
-    if not pipeline:
-        st.info("No pipeline funds. Click 'Upload PDF' or 'Add Manually'.")
-        return
-
-    for fund in pipeline:
-        fid = fund["id"]
-        priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(fund.get("priority",""), "⚪")
-        with st.expander(f"{priority_emoji} {fund['name']} | {fund.get('strategy','')} | Close: {fund.get('target_close_date','')}", expanded=False):
-            col_a, col_b, col_c = st.columns([1, 1, 4])
-            with col_a:
-                if st.button("✏️ Edit", key=f"edit_btn_{fid}"):
-                    st.session_state[f"editing_{fid}"] = True
-            with col_b:
-                if st.button("🗑️ Delete", key=f"del_btn_{fid}"):
-                    st.session_state[f"confirm_delete_{fid}"] = True
-
-            if st.session_state.get(f"confirm_delete_{fid}"):
-                st.warning(f"⚠️ Delete '{fund['name']}'? This action will also delete all associated Gantt tasks.")
-                col_yes, col_no = st.columns(2)
-                with col_yes:
-                    if st.button("✅ Yes, delete", key=f"yes_btn_{fid}", type="primary"):
-                        try:
-                            sb = get_supabase()
-                            log_action("DELETE", "pipeline_funds", f"Deleted pipeline fund: {fund['name']}", fund)
-                            sb.table("gantt_tasks").delete().eq("pipeline_fund_id", fid).execute()
-                            sb.table("pipeline_funds").delete().eq("id", fid).execute()
-                            st.success("Deleted!")
-                            st.session_state.pop(f"confirm_delete_{fid}", None)
-                            clear_cache_and_rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-                with col_no:
-                    if st.button("❌ Cancel", key=f"no_btn_{fid}"):
-                        st.session_state.pop(f"confirm_delete_{fid}", None)
-                        st.rerun()
-
-            if st.session_state.get(f"editing_{fid}"):
-                with st.form(f"edit_form_{fid}"):
-                    st.markdown("**✏️ Edit Fund Details**")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        new_name = st.text_input("Fund Name", value=fund.get("name",""))
-                        new_manager = st.text_input("Manager", value=fund.get("manager",""))
-                        strategy_opts = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
-                        cur_strat = fund.get("strategy","Growth")
-                        new_strategy = st.selectbox("Strategy", strategy_opts,
-                            index=strategy_opts.index(cur_strat) if cur_strat in strategy_opts else 0)
-                        new_geo = st.text_input("Geographic Focus", value=fund.get("geographic_focus","") or "")
-                    with col2:
-                        cur_commit = float(fund.get("target_commitment") or 0)
-                        if 0 < cur_commit <= 1000:
-                            cur_commit *= 1_000_000
-                        new_commitment_input = st.number_input("Target Commitment", value=cur_commit, step=500000.0)
-                        
-                        cur_currency = fund.get("currency","USD")
-                        new_currency = st.selectbox("Currency", ["USD","EUR"], index=0 if cur_currency=="USD" else 1)
-                        
-                        priority_opts = ["High", "Medium", "Low"]
-                        cur_priority = fund.get("priority","medium").capitalize()
-                        new_priority_ui = st.selectbox("Priority", priority_opts,
-                            index=priority_opts.index(cur_priority) if cur_priority in priority_opts else 1)
-                        
-                        cur_date = fund.get("target_close_date")
-                        try:
-                            default_date = datetime.fromisoformat(str(cur_date)).date() if cur_date else date.today()
-                        except:
-                            default_date = date.today()
-                        new_close = st.date_input("Closing Date", value=default_date)
-                    new_notes = st.text_area("Notes", value=fund.get("notes","") or "")
-                    col_save, col_cancel = st.columns(2)
-                    with col_save:
-                        if st.form_submit_button("💾 Save Changes", type="primary"):
+    
+    # Expenses table
+    if expenses:
+        st.markdown("### 📋 All Operating Expenses")
+        
+        exp_data = []
+        for exp in expenses:
+            sym = "€" if exp.get("currency") == "EUR" else "$"
+            exp_data.append({
+                "id": exp["id"],
+                "Date": exp.get("expense_date", ""),
+                "Category": exp.get("category", ""),
+                "Description": exp.get("description", ""),
+                "Amount": format_currency(float(exp.get("amount", 0)), sym),
+                "One-time": "Yes" if exp.get("is_one_time") else "No"
+            })
+        
+        df = pd.DataFrame(exp_data)
+        
+        # Export button
+        col_export, col_space = st.columns([1, 5])
+        with col_export:
+            excel_data = convert_df_to_excel(df.drop(columns=["id"], errors="ignore"))
+            st.download_button(
+                label="📥 Export Excel",
+                data=excel_data,
+                file_name=f"Operating_Expenses_{date.today()}.xlsx",
+                use_container_width=True
+            )
+        
+        st.dataframe(df.drop(columns=["id"]), use_container_width=True, hide_index=True)
+        
+        # Delete expenses
+        st.markdown("#### ⚙️ Manage Expenses")
+        for idx, row in df.iterrows():
+            exp_id = row["id"]
+            with st.expander(f"{row['Category']} - {row['Date']}", expanded=False):
+                col_del = st.columns([5, 1])
+                with col_del[1]:
+                    if st.button("🗑️ Delete", key=f"del_exp_{exp_id}"):
+                        st.session_state[f"confirm_del_exp_{exp_id}"] = True
+                
+                if st.session_state.get(f"confirm_del_exp_{exp_id}"):
+                    st.warning("Delete this expense?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Yes", key=f"yes_exp_{exp_id}"):
                             try:
-                                log_action("UPDATE", "pipeline_funds", f"Updated pipeline fund details: {fund['name']}", fund)
-                                get_supabase().table("pipeline_funds").update({
-                                    "name": new_name, "manager": new_manager,
-                                    "strategy": new_strategy, "target_commitment": new_commitment_input,
-                                    "currency": new_currency, "priority": new_priority_ui.lower(),
-                                    "target_close_date": str(new_close), "notes": new_notes
-                                }).eq("id", fid).execute()
-                                st.success("✅ Updated!")
-                                st.session_state.pop(f"editing_{fid}", None)
+                                exp = next(e for e in expenses if e["id"] == exp_id)
+                                log_action("DELETE", "fund_operating_expenses", f"Deleted expense: {row['Category']}", exp)
+                                sb.table("fund_operating_expenses").delete().eq("id", exp_id).execute()
+                                st.session_state.pop(f"confirm_del_exp_{exp_id}", None)
                                 clear_cache_and_rerun()
                             except Exception as e:
                                 st.error(f"Error: {e}")
-                    with col_cancel:
-                        if st.form_submit_button("❌ Cancel"):
-                            st.session_state.pop(f"editing_{fid}", None)
+                    with c2:
+                        if st.button("❌ Cancel", key=f"no_exp_{exp_id}"):
+                            st.session_state.pop(f"confirm_del_exp_{exp_id}", None)
                             st.rerun()
-            else:
-                col1, col2, col3 = st.columns(3)
-                currency_sym = "€" if fund.get("currency") == "EUR" else "$"
-                with col1:
-                    commitment = float(fund.get("target_commitment") or 0)
-                    st.metric("Target Commitment", format_currency(commitment, currency_sym))
-                with col2:
-                    st.metric("Closing Date", str(fund.get("target_close_date", "")))
-                with col3:
-                    st.metric("Priority", fund.get("priority", "").upper())
-                
-                notes_text = fund.get("notes") or ""
-                notes_text = notes_text.replace("NoneB", "").replace("None", "").replace("x-x", "") 
-                if notes_text.strip():
-                    st.caption(f"📝 {notes_text}")
-                
-                tasks = get_gantt_tasks(fund["id"])
-                if tasks is not None:
-                    show_gantt(tasks, fund)
-
-def show_gantt(tasks, fund):
-    import plotly.graph_objects as go
-    from datetime import timedelta
-
-    CAT_CONFIG = {
-        "Analysis": {"icon": "🟢", "color": "#16a34a", "bg": "#052e16"},
-        "Legal":    {"icon": "🔵", "color": "#2563eb", "bg": "#0c1a4b"},
-        "Tax":      {"icon": "🔴", "color": "#dc2626", "bg": "#3b0a0a"},
-        "Admin":    {"icon": "🟡", "color": "#ca8a04", "bg": "#2d2000"},
-        "IC":       {"icon": "🟣", "color": "#9333ea", "bg": "#2d0a4b"},
-        "DD":       {"icon": "🟠", "color": "#ea580c", "bg": "#3b1a00"},
-    }
-    STATUS_CONFIG = {
-        "todo":        {"icon": "⬜", "label": "To Do",       "color": "#64748b"},
-        "in_progress": {"icon": "🔄", "label": "In Progress", "color": "#3b82f6"},
-        "done":        {"icon": "✅", "label": "Done",        "color": "#22c55e"},
-        "blocked":     {"icon": "🚫", "label": "Blocked",     "color": "#ef4444"},
-    }
-    
-    STATUS_LIST = ["todo", "in_progress", "done", "blocked"]
-    UI_STATUS_LIST = [STATUS_CONFIG[s]["label"] for s in STATUS_LIST]
-
-    sb = get_supabase()
-    fid = fund["id"]
-
-    total = len(tasks)
-    done_n = sum(1 for t in tasks if t.get("status") == "done")
-    in_prog = sum(1 for t in tasks if t.get("status") == "in_progress")
-    blocked_n = sum(1 for t in tasks if t.get("status") == "blocked")
-    pct = int(done_n / total * 100) if total else 0
-
-    st.markdown(f"""
-    <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border-radius:12px;padding:16px 20px;margin:12px 0;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-            <span style="color:#94a3b8;font-size:13px;">Overall Progress</span>
-            <span style="color:#4ade80;font-weight:700;font-size:18px;">{pct}%</span>
-        </div>
-        <div style="background:#0f172a;border-radius:6px;height:8px;overflow:hidden;">
-            <div style="background:linear-gradient(90deg,#16a34a,#4ade80);width:{pct}%;height:100%;border-radius:6px;transition:width 0.5s;"></div>
-        </div>
-        <div style="display:flex;gap:20px;margin-top:12px;">
-            <span style="color:#4ade80;font-size:12px;">✅ Done: {done_n}</span>
-            <span style="color:#3b82f6;font-size:12px;">🔄 In Progress: {in_prog}</span>
-            <span style="color:#ef4444;font-size:12px;">🚫 Blocked: {blocked_n}</span>
-            <span style="color:#64748b;font-size:12px;">⬜ To Do: {total - done_n - in_prog - blocked_n}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    col_hdr1, col_hdr2 = st.columns([3, 1])
-    with col_hdr1:
-        st.markdown("##### 📊 Gantt Chart View")
-    with col_hdr2:
-        show_done = st.toggle("Show completed tasks", value=True, key=f"show_done_toggle_{fid}")
-
-    visible_tasks = tasks if show_done else [t for t in tasks if t.get("status") != "done"]
-
-    gantt_tasks_data = []
-    today_dt = date.today()
-    for t in visible_tasks:
-        if t.get("start_date") and t.get("due_date"):
-            cat = t.get("category", "Admin")
-            cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
-            status = t.get("status", "todo")
-            
-            if status == "done":
-                bar_color = "#22c55e" 
-                icon = "✅"
-                task_display = f"<s>{t['task_name']}</s>"
-            elif status == "blocked":
-                bar_color = "#ef4444" 
-                icon = cfg['icon']
-                task_display = t['task_name']
-            elif status == "in_progress":
-                bar_color = "#3b82f6" 
-                icon = cfg['icon']
-                task_display = t['task_name']
-            else:
-                bar_color = "#475569" 
-                icon = cfg['icon']
-                task_display = t['task_name']
-
-            gantt_tasks_data.append({
-                "Task": f"{icon} {task_display}",
-                "RawName": t["task_name"],
-                "Start": t["start_date"],
-                "Finish": t["due_date"],
-                "Color": bar_color,
-                "Category": cat,
-                "Status": STATUS_CONFIG.get(status, {}).get("label", status),
-            })
-
-    if gantt_tasks_data:
-        fig = go.Figure()
-        sorted_tasks = sorted(gantt_tasks_data, key=lambda x: x["Start"], reverse=True)
-
-        for i, t in enumerate(sorted_tasks):
-            start_dt_val = datetime.fromisoformat(t["Start"])
-            finish_dt_val = datetime.fromisoformat(t["Finish"]) + timedelta(days=1)
-            duration_ms = (finish_dt_val - start_dt_val).total_seconds() * 1000
-
-            fig.add_trace(go.Bar(
-                x=[duration_ms],
-                y=[t["Task"]],
-                base=[t["Start"]],
-                orientation="h",
-                marker=dict(color=t["Color"], opacity=0.95, line=dict(width=1, color="#0f172a")),
-                text=[f" {t['Status']}"],
-                textposition="inside",
-                insidetextanchor="middle",
-                textfont=dict(color="white", size=13, family="Inter"),
-                hovertemplate=f"<b>{t['RawName']}</b><br>{t['Start']} → {t['Finish']}<br>Status: {t['Status']}<extra></extra>",
-                showlegend=False,
-            ))
-            
-        fig.add_shape(
-            type="line",
-            x0=str(today_dt), x1=str(today_dt),
-            y0=0, y1=1, yref="paper",
-            line=dict(color="#f59e0b", width=2, dash="dash"),
-        )
-        fig.add_annotation(
-            x=str(today_dt), y=1, yref="paper",
-            text="Today", showarrow=False,
-            font=dict(color="#f59e0b", size=13, family="Inter"),
-            yanchor="bottom"
-        )
-        
-        fig.update_layout(
-            height=max(350, len(sorted_tasks) * 45 + 100),
-            barmode="overlay",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="#0f172a",
-            font=dict(color="#e2e8f0", size=14, family="Inter"),
-            margin=dict(l=10, r=20, t=40, b=40),
-            xaxis=dict(type="date", gridcolor="#1e293b", tickformat="%d/%m/%y", tickfont=dict(size=13)),
-            yaxis=dict(gridcolor="#1e293b", tickfont=dict(size=14), automargin=True),
-        )
-        st.plotly_chart(fig, use_container_width=True, key=f"gantt_chart_{fid}")
     else:
-        st.info("No tasks to display in this chart currently.")
-
-    st.markdown("##### 📋 Edit Tasks")
+        st.info("No operating expenses recorded yet.")
     
-    cats_order = ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"]
-    for cat in cats_order:
-        cat_tasks = [t for t in visible_tasks if t.get("category","") == cat]
-        if not cat_tasks:
-            continue
+    # Breakdown by category
+    if expenses_by_category:
+        st.divider()
+        st.markdown("### 📊 Expenses by Category")
+        
+        fig = px.pie(
+            values=list(expenses_by_category.values()),
+            names=list(expenses_by_category.keys()),
+            title="Operating Expenses Breakdown"
+        )
+        fig.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font_color='white'
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-        cfg = CAT_CONFIG.get(cat, CAT_CONFIG["Admin"])
-        all_cat_tasks = [t for t in tasks if t.get("category","") == cat]
-        done_c = sum(1 for t in all_cat_tasks if t.get("status") == "done")
-        cat_pct = int(done_c / len(all_cat_tasks) * 100)
-
-        st.markdown(f"""
-        <div style="background:{cfg['bg']};border-left:3px solid {cfg['color']};
-                    border-radius:8px;padding:10px 14px;margin:8px 0 4px 0;
-                    display:flex;justify-content:space-between;align-items:center;">
-            <span style="color:{cfg['color']};font-weight:600;">{cfg['icon']} {cat}</span>
-            <span style="color:#94a3b8;font-size:12px;">{done_c}/{len(all_cat_tasks)} · {cat_pct}%</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-        for t in cat_tasks:
-            current_status = t.get("status", "todo")
-            scfg = STATUS_CONFIG.get(current_status, STATUS_CONFIG["todo"])
-            current_ui_label = scfg["label"]
-            
-            try:
-                current_start = datetime.fromisoformat(t["start_date"]).date() if t.get("start_date") else date.today()
-                current_due = datetime.fromisoformat(t["due_date"]).date() if t.get("due_date") else date.today()
-            except:
-                current_start, current_due = date.today(), date.today()
-
-            col_icon, col_name, col_start, col_due, col_status, col_del = st.columns([0.5, 3, 2, 2, 2, 0.5])
-            with col_icon:
-                st.markdown(f"<div style='margin-top:5px; font-size:18px;'>{scfg['icon']}</div>", unsafe_allow_html=True)
-            with col_name:
-                new_name = st.text_input("Task Name", value=t["task_name"], key=f"name_{fid}_{t['id']}", label_visibility="collapsed")
-            with col_start:
-                new_start = st.date_input("Start", value=current_start, key=f"start_{fid}_{t['id']}", label_visibility="collapsed")
-            with col_due:
-                new_due = st.date_input("End", value=current_due, key=f"due_{fid}_{t['id']}", label_visibility="collapsed")
-            with col_status:
-                new_ui_label = st.selectbox(
-                    "Status",
-                    UI_STATUS_LIST,
-                    index=UI_STATUS_LIST.index(current_ui_label) if current_ui_label in UI_STATUS_LIST else 0,
-                    key=f"status_{fid}_{t['id']}",
-                    label_visibility="collapsed"
-                )
-            
-            new_status_mapped = [k for k, v in STATUS_CONFIG.items() if v["label"] == new_ui_label][0]
-
-            with col_del:
-                if st.button("🗑️", key=f"del_{fid}_{t['id']}", help="Delete Task"):
-                    try:
-                        log_action("DELETE", "gantt_tasks", f"Deleted Gantt task: {t['task_name']}", t)
-                        sb.table("gantt_tasks").delete().eq("id", t["id"]).execute()
-                        clear_cache_and_rerun()
-                    except Exception as e:
-                        st.error(f"Delete Error: {e}")
-                
-            if new_status_mapped != current_status or str(new_start) != t.get("start_date") or str(new_due) != t.get("due_date") or new_name != t["task_name"]:
-                try:
-                    sb.table("gantt_tasks").update({
-                        "task_name": new_name,
-                        "status": new_status_mapped,
-                        "start_date": str(new_start),
-                        "due_date": str(new_due)
-                    }).eq("id", t["id"]).execute()
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Update Task Error: {e}")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander("➕ Add New Task to Gantt"):
-        with st.form(f"add_new_task_{fid}"):
-            c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
-            with c1:
-                new_t_name = st.text_input("Task Name")
-            with c2:
-                new_t_cat = st.selectbox("Category", ["Analysis", "IC", "DD", "Legal", "Tax", "Admin"])
-            with c3:
-                new_t_start = st.date_input("Start Date", value=date.today())
-            with c4:
-                new_t_due = st.date_input("Due Date", value=date.today())
-            
-            if st.form_submit_button("Save Task", type="primary"):
-                if new_t_name:
-                    try:
-                        sb.table("gantt_tasks").insert({
-                            "pipeline_fund_id": fid,
-                            "task_name": new_t_name,
-                            "category": new_t_cat,
-                            "start_date": str(new_t_start),
-                            "due_date": str(new_t_due),
-                            "status": "todo"
-                        }).execute()
-                        st.success("Task successfully added!")
-                        clear_cache_and_rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-                else:
-                    st.error("Please enter a task name")
 
 def show_reports():
     st.title("📈 Reports & Analytics")
