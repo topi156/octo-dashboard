@@ -1,19 +1,3 @@
-היי לירן! מתנצל, הבנתי בדיוק למה קיבלת את ה-`NameError`. 
-בניסיון שלי לשלב הכל בגרסה הקודמת (9.4.14), פשוט חתכתי בטעות החוצה שתי פונקציות שלמות מהקוד (`show_portfolio` ו-`show_fund_detail`) כדי "לחסוך מקום". כמובן שברגע שלחצת על "Portfolio" המערכת חיפשה את הפונקציה ולא מצאה אותה... טעות אנוש שלי.
-
-הרכבתי כאן את הקוד מחדש מאפס, והוא **שלם, עובד, וכולל בתוכו הכל**:
-1. **לשונית "Fund Expenses" החדשה:** לניהול ההוצאות התפעוליות של ה-Feeder (רואי חשבון, אגרות, דמי ניהול וכו').
-2. **Net LP IRR ב-Overview:** מנוע ה-XIRR מפחית כעת את ההוצאות מהלשונית החדשה, מה שאומר שהתשואה שתראה היא ה-True Net IRR של המשקיעים באוקטו!
-3. **פירוט הוצאות מלא (Mgmt / Expenses) בתוך כל קריאה** כפי שביקשת.
-
-עשה Copy-Paste לכל הבלוק הזה, שמור ותריץ `git push`, והמערכת תעבוד בצורה מושלמת:
-
-```python
-"""
-OCTO FUND DASHBOARD v9.4.15 - app.py
-Master Version: AI Expenses Aggregation, Transparent Calls & Fund Operating Expenses
-"""
-
 import streamlit as st
 import hashlib
 import pandas as pd
