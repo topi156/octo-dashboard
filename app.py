@@ -2306,14 +2306,231 @@ def show_reports():
     </div>
     """, unsafe_allow_html=True)
     
+    sb = get_supabase()
     funds = get_funds()
     all_reports = get_quarterly_reports(None)
     
+    # Add/Upload Section
+    st.divider()
+    col_add, col_summary = st.columns([1, 1])
+    
+    with col_add:
+        with st.expander("➕ Add / Upload Quarterly Reports"):
+            fund_options = {f["name"]: f["id"] for f in funds}
+            if not fund_options:
+                st.warning("No funds in portfolio. Add a fund first.")
+            else:
+                tab_manual, tab_upload = st.tabs(["Manual Entry", "Upload & AI Extract"])
+                
+                with tab_manual:
+                    with st.form("manual_report_form"):
+                        st.markdown("**Add Report Manually**")
+                        selected_fund = st.selectbox("Select Fund", list(fund_options.keys()))
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            year = st.number_input("Year", min_value=2020, max_value=2030, value=2025)
+                            quarter = st.selectbox("Quarter", [1, 2, 3, 4])
+                            report_date = st.date_input("Report Date")
+                        with col2:
+                            nav = st.number_input("NAV (Fund Level)", min_value=0.0)
+                            tvpi = st.number_input("TVPI", min_value=0.0, step=0.01, format="%.2f")
+                            dpi = st.number_input("DPI", min_value=0.0, step=0.01, format="%.2f")
+                        
+                        col3, col4 = st.columns(2)
+                        with col3:
+                            rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f")
+                        with col4:
+                            irr = st.number_input("IRR %", step=0.1, format="%.1f")
+                        
+                        notes = st.text_area("Notes")
+                        
+                        if st.form_submit_button("💾 Save Report", type="primary"):
+                            try:
+                                fund_id = fund_options[selected_fund]
+                                sb.table("quarterly_reports").insert({
+                                    "fund_id": fund_id,
+                                    "year": year,
+                                    "quarter": quarter,
+                                    "report_date": str(report_date),
+                                    "nav": nav,
+                                    "tvpi": tvpi,
+                                    "dpi": dpi,
+                                    "rvpi": rvpi,
+                                    "irr": irr,
+                                    "notes": notes
+                                }).execute()
+                                log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
+                                st.success("✅ Report saved!")
+                                clear_cache_and_rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                
+                with tab_upload:
+                    st.markdown("**Upload Report File (PDF/Excel/CSV)**")
+                    selected_fund_upload = st.selectbox("Select Fund", list(fund_options.keys()), key="upload_fund")
+                    uploaded_file = st.file_uploader("Upload File", type=["pdf", "xlsx", "xls", "csv"])
+                    
+                    if uploaded_file:
+                        if st.button("🤖 Analyze with AI", type="primary"):
+                            with st.spinner("Claude is analyzing..."):
+                                try:
+                                    file_bytes = uploaded_file.read()
+                                    file_name = uploaded_file.name
+                                    
+                                    if file_name.lower().endswith('.pdf'):
+                                        rep_text = extract_pdf_text(file_bytes)
+                                    else:
+                                        if file_name.lower().endswith('.csv'):
+                                            df = pd.read_csv(io.BytesIO(file_bytes))
+                                        else:
+                                            df = pd.read_excel(io.BytesIO(file_bytes))
+                                        rep_text = df.to_string(index=False)
+                                        if len(rep_text) > 12000:
+                                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
+                                    
+                                    ai_result = analyze_quarterly_report_with_ai(rep_text)
+                                    st.session_state.report_ai_result = ai_result
+                                    st.success("✅ Extracted! Review below and save:")
+                                    
+                                    with st.form("ai_report_confirm"):
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            year_ai = st.number_input("Year", value=int(ai_result.get("year") or 2025))
+                                            quarter_ai = st.selectbox("Quarter", [1,2,3,4], index=[1,2,3,4].index(int(ai_result.get("quarter") or 1)))
+                                            nav_ai = st.number_input("NAV", value=float(ai_result.get("nav") or 0.0))
+                                        with col2:
+                                            tvpi_ai = st.number_input("TVPI", value=float(ai_result.get("tvpi") or 0.0), step=0.01, format="%.2f")
+                                            dpi_ai = st.number_input("DPI", value=float(ai_result.get("dpi") or 0.0), step=0.01, format="%.2f")
+                                            rvpi_ai = st.number_input("RVPI", value=float(ai_result.get("rvpi") or 0.0), step=0.01, format="%.2f")
+                                        
+                                        irr_ai = st.number_input("IRR %", value=float(ai_result.get("irr") or 0.0), step=0.1, format="%.1f")
+                                        
+                                        if st.form_submit_button("💾 Confirm & Save", type="primary"):
+                                            try:
+                                                fund_id = fund_options[selected_fund_upload]
+                                                sb.table("quarterly_reports").insert({
+                                                    "fund_id": fund_id,
+                                                    "year": year_ai,
+                                                    "quarter": quarter_ai,
+                                                    "report_date": str(date.today()),
+                                                    "nav": nav_ai,
+                                                    "tvpi": tvpi_ai,
+                                                    "dpi": dpi_ai,
+                                                    "rvpi": rvpi_ai,
+                                                    "irr": irr_ai
+                                                }).execute()
+                                                st.success("✅ Report saved!")
+                                                st.session_state.pop("report_ai_result", None)
+                                                clear_cache_and_rerun()
+                                            except Exception as e:
+                                                st.error(f"Error: {e}")
+                                except Exception as e:
+                                    st.error(f"Analysis error: {e}")
+    
+    with col_summary:
+        with st.expander("📊 Portfolio Summary Statistics"):
+            if all_reports:
+                latest_reports = {}
+                for r in all_reports:
+                    fid = r["fund_id"]
+                    if fid not in latest_reports:
+                        latest_reports[fid] = r
+                    else:
+                        curr = latest_reports[fid]
+                        if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                            latest_reports[fid] = r
+                
+                avg_tvpi = sum(float(r.get("tvpi") or 0) for r in latest_reports.values()) / len(latest_reports) if latest_reports else 0
+                avg_dpi = sum(float(r.get("dpi") or 0) for r in latest_reports.values()) / len(latest_reports) if latest_reports else 0
+                avg_irr = sum(float(r.get("irr") or 0) for r in latest_reports.values()) / len(latest_reports) if latest_reports else 0
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Avg TVPI", f"{avg_tvpi:.2f}x")
+                with col2:
+                    st.metric("Avg DPI", f"{avg_dpi:.2f}x")
+                with col3:
+                    st.metric("Avg IRR", f"{avg_irr:.1f}%")
+            else:
+                st.info("No reports yet")
+    
+    st.divider()
+    
+    # Reports Table
     if not all_reports:
-        st.info("📊 No quarterly reports have been uploaded yet. Add reports in the Portfolio section to see analytics here.")
+        st.info("📊 No quarterly reports. Add reports above to see analytics.")
         return
     
-    # Latest reports per fund
+    st.markdown("### 📋 All Quarterly Reports")
+    
+    # Build reports table
+    reports_data = []
+    for r in all_reports:
+        fund = next((f for f in funds if f["id"] == r["fund_id"]), None)
+        if fund:
+            reports_data.append({
+                "id": r["id"],
+                "Fund": fund["name"],
+                "Quarter": f"Q{r['quarter']}/{r['year']}",
+                "Report Date": r.get("report_date", ""),
+                "NAV": format_currency(float(r.get("nav") or 0), "€" if fund.get("currency") == "EUR" else "$"),
+                "TVPI": f"{float(r.get('tvpi') or 0):.2f}x",
+                "DPI": f"{float(r.get('dpi') or 0):.2f}x",
+                "RVPI": f"{float(r.get('rvpi') or 0):.2f}x",
+                "IRR": f"{float(r.get('irr') or 0):.1f}%"
+            })
+    
+    if reports_data:
+        df = pd.DataFrame(reports_data)
+        
+        # Export button
+        col_export, col_space = st.columns([1, 5])
+        with col_export:
+            excel_data = convert_df_to_excel(df.drop(columns=["id"], errors="ignore"))
+            st.download_button(
+                label="📥 Export Excel",
+                data=excel_data,
+                file_name=f"Portfolio_Reports_{date.today()}.xlsx",
+                use_container_width=True
+            )
+        
+        # Display table
+        st.dataframe(df.drop(columns=["id"]), use_container_width=True, hide_index=True)
+        
+        # Edit/Delete for each report
+        st.markdown("#### ⚙️ Manage Reports")
+        for idx, row in df.iterrows():
+            report_id = row["id"]
+            with st.expander(f"{row['Fund']} - {row['Quarter']}", expanded=False):
+                col_edit, col_del = st.columns([5, 1])
+                with col_del:
+                    if st.button("🗑️ Delete", key=f"del_rep_{report_id}"):
+                        st.session_state[f"confirm_del_report_{report_id}"] = True
+                
+                if st.session_state.get(f"confirm_del_report_{report_id}"):
+                    st.warning("Delete this report?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Yes", key=f"yes_rep_{report_id}"):
+                            try:
+                                rep = next(r for r in all_reports if r["id"] == report_id)
+                                log_action("DELETE", "quarterly_reports", f"Deleted {row['Quarter']} report for {row['Fund']}", rep)
+                                sb.table("quarterly_reports").delete().eq("id", report_id).execute()
+                                st.session_state.pop(f"confirm_del_report_{report_id}", None)
+                                clear_cache_and_rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    with c2:
+                        if st.button("❌ Cancel", key=f"no_rep_{report_id}"):
+                            st.session_state.pop(f"confirm_del_report_{report_id}", None)
+                            st.rerun()
+    
+    st.divider()
+    
+    # Performance Trends
+    st.markdown("### 📈 Performance Trends")
+    
     latest_reports = {}
     for r in all_reports:
         fid = r["fund_id"]
@@ -2324,37 +2541,6 @@ def show_reports():
             if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
                 latest_reports[fid] = r
     
-    st.markdown("### 📊 Latest Performance Summary")
-    
-    summary_data = []
-    for f in funds:
-        if f["id"] in latest_reports:
-            rep = latest_reports[f["id"]]
-            sym = "€" if f.get("currency") == "EUR" else "$"
-            
-            tvpi = float(rep.get('tvpi') or 0.0)
-            dpi = float(rep.get('dpi') or 0.0)
-            rvpi = float(rep.get('rvpi') or 0.0)
-            irr = float(rep.get('irr') or 0.0)
-            nav = float(rep.get('nav') or 0.0)
-            
-            summary_data.append({
-                "Fund Name": f["name"],
-                "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
-                "NAV": format_currency(nav, sym),
-                "TVPI": f"{tvpi:.2f}x" if tvpi > 0 else "—",
-                "DPI": f"{dpi:.2f}x" if dpi > 0 else "—",
-                "RVPI": f"{rvpi:.2f}x" if rvpi > 0 else "—",
-                "IRR": f"{irr:.1f}%" if irr > 0 else "—"
-            })
-    
-    if summary_data:
-        st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
-    
-    st.divider()
-    st.markdown("### 📈 Performance Trends")
-    
-    # Create tabs for each fund
     fund_names = [f["name"] for f in funds if f["id"] in latest_reports]
     if fund_names:
         tabs = st.tabs(fund_names)
@@ -2367,77 +2553,43 @@ def show_reports():
                 if len(fund_reports) > 1:
                     labels = [f"Q{r['quarter']}/{r['year']}" for r in fund_reports]
                     
+                    # Multiples Chart
                     fig = go.Figure()
-                    
                     if any(r.get("tvpi") for r in fund_reports):
-                        fig.add_trace(go.Scatter(
-                            x=labels, 
-                            y=[float(r.get("tvpi") or 0) for r in fund_reports], 
-                            name="TVPI", 
-                            line=dict(color="#4ade80", width=3),
-                            mode='lines+markers'
-                        ))
-                    
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("tvpi") or 0) for r in fund_reports], 
+                                                name="TVPI", line=dict(color="#4ade80", width=3), mode='lines+markers'))
                     if any(r.get("dpi") for r in fund_reports):
-                        fig.add_trace(go.Scatter(
-                            x=labels, 
-                            y=[float(r.get("dpi") or 0) for r in fund_reports], 
-                            name="DPI", 
-                            line=dict(color="#60a5fa", width=3),
-                            mode='lines+markers'
-                        ))
-                    
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("dpi") or 0) for r in fund_reports], 
+                                                name="DPI", line=dict(color="#60a5fa", width=3), mode='lines+markers'))
                     if any(r.get("rvpi") for r in fund_reports):
-                        fig.add_trace(go.Scatter(
-                            x=labels, 
-                            y=[float(r.get("rvpi") or 0) for r in fund_reports], 
-                            name="RVPI", 
-                            line=dict(color="#fbbf24", width=3),
-                            mode='lines+markers'
-                        ))
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("rvpi") or 0) for r in fund_reports], 
+                                                name="RVPI", line=dict(color="#fbbf24", width=3), mode='lines+markers'))
                     
                     fig.update_layout(
-                        title=f"{f['name']} - Performance Over Time",
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='#0f172a',
+                        title=f"{f['name']} - Multiples Over Time",
+                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0f172a',
                         font=dict(color='#e2e8f0', size=14, family='Inter'),
-                        xaxis=dict(gridcolor='#1e293b'),
-                        yaxis=dict(gridcolor='#1e293b', title="Multiple (x)"),
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="right",
-                            x=1
-                        ),
+                        xaxis=dict(gridcolor='#1e293b'), yaxis=dict(gridcolor='#1e293b', title="Multiple (x)"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                         hovermode='x unified'
                     )
-                    
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # IRR trend
+                    # IRR Chart
                     if any(r.get("irr") for r in fund_reports):
                         fig_irr = go.Figure()
                         fig_irr.add_trace(go.Scatter(
-                            x=labels,
-                            y=[float(r.get("irr") or 0) for r in fund_reports],
-                            name="IRR",
-                            line=dict(color="#a78bfa", width=3),
-                            mode='lines+markers',
-                            fill='tozeroy'
+                            x=labels, y=[float(r.get("irr") or 0) for r in fund_reports],
+                            name="IRR", line=dict(color="#a78bfa", width=3),
+                            mode='lines+markers', fill='tozeroy'
                         ))
-                        
                         fig_irr.update_layout(
                             title=f"{f['name']} - IRR Trend",
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            plot_bgcolor='#0f172a',
+                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0f172a',
                             font=dict(color='#e2e8f0', size=14, family='Inter'),
-                            xaxis=dict(gridcolor='#1e293b'),
-                            yaxis=dict(gridcolor='#1e293b', title="IRR (%)"),
-                            showlegend=False,
-                            hovermode='x unified'
+                            xaxis=dict(gridcolor='#1e293b'), yaxis=dict(gridcolor='#1e293b', title="IRR (%)"),
+                            showlegend=False, hovermode='x unified'
                         )
-                        
                         st.plotly_chart(fig_irr, use_container_width=True)
                 else:
                     st.info("Need at least 2 quarterly reports to show trends.")
