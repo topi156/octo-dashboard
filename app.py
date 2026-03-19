@@ -965,31 +965,48 @@ def show_overview():
 
     with col1:
         st.subheader("📋 Funds Status")
-        if funds:
-            rows = []
-            for f in funds:
-                f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
-                f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
-                f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
-                total_called = f_metrics["total_called"]
+    if funds:
+        rows = []
+        for f in funds:
+            f_calls = [c for c in calls if c["fund_id"] == f["id"]]
+            f_dists = get_distributions(f["id"])
+            f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+            total_called = f_metrics["total_called"]
+            
+            c_val = float(f.get("commitment") or 0)
+            if 0 < c_val <= 1000:
+                c_val *= 1_000_000
                 
-                c_val = float(f.get("commitment") or 0)
-                if 0 < c_val <= 1000:
-                    c_val *= 1_000_000
-                    
-                pct = f"{total_called/c_val*100:.1f}%" if c_val > 0 else "—"
-                currency_sym = "€" if f.get("currency") == "EUR" else "$"
-                rows.append({
-                    "Fund": f["name"],
-                    "Currency": f.get("currency", "USD"),
-                    "Commitment": format_currency(c_val, currency_sym),
-                    "Total Called": format_currency(total_called, currency_sym) if total_called > 0 else "—",
-                    "Called %": pct,
-                    "Status": f.get("status", "active").capitalize(),
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        else:
-            st.info("No funds in the system")
+            pct = f"{total_called/c_val*100:.1f}%" if c_val > 0 else "—"
+            currency_sym = "€" if f.get("currency") == "EUR" else "$"
+            
+            # Calculate Octo NAV
+            octo_nav = 0
+            if f["id"] in latest_reports:
+                rep = latest_reports[f["id"]]
+                rvpi = float(rep.get('rvpi') or 0.0)
+                tvpi = float(rep.get('tvpi') or 1.0)
+                
+                if rvpi > 0:
+                    octo_nav = total_called * rvpi
+                else:
+                    octo_nav = total_called * tvpi - f_metrics["total_distributed"]
+            else:
+                # If no report, NAV = Total Called (assuming 1x multiple)
+                octo_nav = total_called
+            
+            rows.append({
+                "Fund": f["name"],
+                "Currency": f.get("currency", "USD"),
+                "Commitment": format_currency(c_val, currency_sym),
+                "Total Called": format_currency(total_called, currency_sym) if total_called > 0 else "—",
+                "Called %": pct,
+                "Octo NAV": format_currency(octo_nav, currency_sym) if octo_nav > 0 else "—",
+                "Status": f.get("status", "active").capitalize(),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No funds in the system")
 
     with col2:
         st.subheader("🔔 Upcoming Events")
