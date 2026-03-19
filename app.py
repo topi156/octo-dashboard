@@ -953,41 +953,6 @@ def show_overview():
         st.metric("Portfolio TVPI", f"{portfolio_tvpi:.2f}x" if portfolio_tvpi > 0 else "—")
     with c8:
         st.metric("Portfolio Net IRR", f"{portfolio_irr * 100:.1f}%" if portfolio_irr else "—")
-בבלוק הזה:
-
-Python
-    # Process Portfolio Level Analytics
-    portfolio_cash_flows.append((date.today(), total_nav_usd))
-    portfolio_irr = calculate_xirr(portfolio_cash_flows)
-    portfolio_tvpi = (total_dist_cash_usd + total_nav_usd) / total_paid_in_cash_usd if total_paid_in_cash_usd > 0 else 0
-
-    irr_display = "—"
-    if isinstance(portfolio_irr, float):
-        irr_display = f"{portfolio_irr * 100:.1f}%"
-    elif portfolio_irr == "NM":
-        irr_display = "NM (<1 Year)"
-
-    st.markdown("##### 🏛️ Legal & Commitment (Basis)")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Active Funds", len(funds))
-    with c2:
-        st.metric("Total Commitments (USD Eqv)", format_currency(total_commit_usd, "$"))
-    with c3:
-        st.metric("Total Called (Basis)", format_currency(total_called_basis_usd, "$"))
-    with c4:
-        st.metric("Uncalled Balance", format_currency(total_uncalled_usd, "$"))
-
-    st.markdown("##### 🚀 Cash & Performance (Net LP)")
-    c5, c6, c7, c8 = st.columns(4)
-    with c5:
-        st.metric("Total Paid-In (Cash Out)", format_currency(total_paid_in_cash_usd, "$"))
-    with c6:
-        st.metric("Octo True NAV (USD Eqv)", format_currency(total_nav_usd, "$"))
-    with c7:
-        st.metric("Portfolio TVPI", f"{portfolio_tvpi:.2f}x" if portfolio_tvpi > 0 else "—")
-    with c8:
-        st.metric("Portfolio Net IRR", irr_display)
 
     st.divider()
     col1, col2 = st.columns([2, 1])
