@@ -2336,6 +2336,166 @@ def show_reports():
                         st.plotly_chart(fig_irr, use_container_width=True)
                 else:
                     st.info("Need at least 2 quarterly reports to show trends.")
+# הוסף את הקוד הזה לפני if __name__ == "__main__": (בערך שורה 2341)
 
+def show_pipeline():
+    st.title("🔍 Pipeline Funds")
+    pipeline = get_pipeline_funds()
+
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col2:
+        if st.button("➕ Add Manually", use_container_width=True):
+            st.session_state.show_add_pipeline = True
+            st.session_state.show_pdf_upload = False
+    with col3:
+        if st.button("📄 Upload PDF", type="primary", use_container_width=True):
+            st.session_state.show_pdf_upload = True
+            st.session_state.show_add_pipeline = False
+
+    if st.session_state.get("show_pdf_upload"):
+        st.divider()
+        st.markdown("### 📄 Automatic PDF Analysis")
+        uploaded_pdf = st.file_uploader("Upload Fund Pitch Deck (PDF)", type=["pdf"], key="pdf_uploader")
+        if uploaded_pdf:
+            if st.button("🤖 Analyze with AI", type="primary"):
+                with st.spinner("Claude is analyzing the presentation... (30-60 seconds)"):
+                    try:
+                        pdf_bytes = uploaded_pdf.read()
+                        result = analyze_pdf_with_ai(pdf_bytes)
+                        st.session_state.pdf_result = result
+                        st.success("✅ Analysis complete!")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        
+        if st.session_state.get("pdf_result"):
+            r = st.session_state.pdf_result
+            st.divider()
+            st.markdown("### 📋 Extracted Details – Review and Confirm")
+            if r.get("key_highlights"):
+                st.info(f"💡 {r.get('key_highlights')}")
+            
+            with st.form("pdf_pipeline_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    fund_name = st.text_input("Fund Name", value=r.get("fund_name") or "")
+                    manager = st.text_input("Manager", value=r.get("manager") or "")
+                    strategy_options = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
+                    ai_strategy = r.get("strategy", "Growth")
+                    strategy_idx = strategy_options.index(ai_strategy) if ai_strategy in strategy_options else 0
+                    strategy = st.selectbox("Strategy", strategy_options, index=strategy_idx)
+                
+                with col2:
+                    target_commitment = st.number_input("Our Target Commitment", min_value=0.0, value=0.0, step=500000.0)
+                    currency = st.selectbox("Currency", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
+                    target_close = st.date_input("Target Close Date")
+                
+                notes = st.text_area("Notes")
+                
+                if st.form_submit_button("✅ Create Pipeline Fund", type="primary"):
+                    try:
+                        sb = get_supabase()
+                        sb.table("pipeline_funds").insert({
+                            "name": fund_name,
+                            "manager": manager,
+                            "strategy": strategy,
+                            "target_commitment": target_commitment,
+                            "currency": currency,
+                            "target_close_date": str(target_close),
+                            "priority": "medium",
+                            "notes": notes
+                        }).execute()
+                        st.success(f"✅ Fund '{fund_name}' created!")
+                        st.session_state.pdf_result = None
+                        st.session_state.show_pdf_upload = False
+                        clear_cache_and_rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+    if st.session_state.get("show_add_pipeline"):
+        st.divider()
+        with st.form("add_pipeline_manual"):
+            st.markdown("### ➕ Manual Addition")
+            col1, col2 = st.columns(2)
+            with col1:
+                name = st.text_input("Fund Name")
+                manager = st.text_input("Manager")
+                strategy = st.selectbox("Strategy", ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"])
+            with col2:
+                target_commitment_input = st.number_input("Target Commitment", min_value=0.0, value=0.0, step=500000.0)
+                currency = st.selectbox("Currency", ["USD", "EUR"])
+                target_close = st.date_input("Closing Date")
+            
+            notes = st.text_area("Notes")
+            
+            if st.form_submit_button("Create Fund", type="primary"):
+                try:
+                    sb = get_supabase()
+                    sb.table("pipeline_funds").insert({
+                        "name": name,
+                        "manager": manager,
+                        "strategy": strategy,
+                        "target_commitment": target_commitment_input,
+                        "currency": currency,
+                        "target_close_date": str(target_close),
+                        "priority": "medium",
+                        "notes": notes
+                    }).execute()
+                    st.success(f"✅ Fund '{name}' created!")
+                    st.session_state.show_add_pipeline = False
+                    clear_cache_and_rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    st.divider()
+
+    if not pipeline:
+        st.info("No pipeline funds. Click 'Upload PDF' or 'Add Manually'.")
+        return
+
+    # Display pipeline funds
+    for fund in pipeline:
+        fid = fund["id"]
+        priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(fund.get("priority",""), "⚪")
+        
+        with st.expander(f"{priority_emoji} {fund['name']} | {fund.get('strategy','')} | Close: {fund.get('target_close_date','')}", expanded=False):
+            col_a, col_b = st.columns([5, 1])
+            
+            with col_b:
+                if st.button("🗑️ Delete", key=f"del_btn_{fid}"):
+                    st.session_state[f"confirm_delete_{fid}"] = True
+            
+            if st.session_state.get(f"confirm_delete_{fid}"):
+                st.warning(f"⚠️ Delete '{fund['name']}'?")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✅ Yes, delete", key=f"yes_btn_{fid}", type="primary"):
+                        try:
+                            sb = get_supabase()
+                            log_action("DELETE", "pipeline_funds", f"Deleted pipeline fund: {fund['name']}", fund)
+                            sb.table("gantt_tasks").delete().eq("pipeline_fund_id", fid).execute()
+                            sb.table("pipeline_funds").delete().eq("id", fid).execute()
+                            st.session_state.pop(f"confirm_delete_{fid}", None)
+                            clear_cache_and_rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                with c2:
+                    if st.button("❌ Cancel", key=f"no_btn_{fid}"):
+                        st.session_state.pop(f"confirm_delete_{fid}", None)
+                        st.rerun()
+            else:
+                # Show fund details
+                col1, col2, col3 = st.columns(3)
+                currency_sym = "€" if fund.get("currency") == "EUR" else "$"
+                
+                with col1:
+                    commitment = float(fund.get("target_commitment") or 0)
+                    st.metric("Target Commitment", format_currency(commitment, currency_sym))
+                with col2:
+                    st.metric("Closing Date", str(fund.get("target_close_date", "")))
+                with col3:
+                    st.metric("Priority", fund.get("priority", "").upper())
+                
+                if fund.get("notes"):
+                    st.caption(f"📝 {fund['notes']}")
 if __name__ == "__main__":
     main()
