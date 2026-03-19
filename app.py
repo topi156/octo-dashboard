@@ -1,3 +1,8 @@
+"""
+OCTO FUND DASHBOARD v9.4.16 - app.py
+Master Version: Fixed Indentations, Fully Integrated Fund Expenses & Net IRR
+"""
+
 import streamlit as st
 import hashlib
 import pandas as pd
@@ -734,7 +739,7 @@ def main():
 
         st.divider()
         st.caption(f"User: {st.session_state.get('username', '')}")
-        st.caption("Version 9.4.15 | Complete True Net LP Analytics")
+        st.caption("Version 9.4.16 | Fixed Indents & Full Analytics")
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True, help="Pull latest data from the server"):
@@ -803,7 +808,6 @@ def show_overview():
     """, unsafe_allow_html=True)
 
     funds = get_funds()
-    pipeline = get_pipeline_funds()
     all_calls = get_capital_calls()
     all_dists = get_distributions()
     all_reports = get_quarterly_reports(None)
@@ -857,7 +861,8 @@ def show_overview():
             try:
                 p_date = datetime.strptime(str(p_date_str).split("T")[0], "%Y-%m-%d").date()
                 tx_type = c.get("transaction_type", "call")
-                # Amount represents the actual Cash Out, implicitly capturing expenses/fees
+                
+                # Amount represents actual Cash Out, eq is interest paid
                 amt = float(c.get("amount") or 0) * rate
                 eq = float(c.get("equalisation_interest") or 0) * rate
                 
@@ -866,6 +871,7 @@ def show_overview():
                     fund_paid_in += flow
                     portfolio_cash_flows.append((p_date, -flow))
                 elif tx_type == "repayment":
+                    # Repayment acts as money returned to LP
                     fund_paid_in -= amt
                     portfolio_cash_flows.append((p_date, amt))
                 elif tx_type == "distribution":
@@ -899,7 +905,9 @@ def show_overview():
             
         total_nav_usd += fund_nav
 
-    # Add operating expenses to cash flows
+    # -------------------------------------------------------------
+    # ADD FUND OPERATING EXPENSES (Reduces Net IRR & Multiples)
+    # -------------------------------------------------------------
     operating_expenses = get_operating_expenses()
     total_operating_expenses_cash_usd = 0
     for exp in operating_expenses:
@@ -909,7 +917,7 @@ def show_overview():
             exp_date = datetime.strptime(str(exp_date_str).split("T")[0], "%Y-%m-%d").date()
             rate = st.session_state.eur_usd_rate if exp.get("currency") == "EUR" else 1.0
             amt = float(exp.get("amount", 0)) * rate
-            portfolio_cash_flows.append((exp_date, -amt))  # Expenses are negative
+            portfolio_cash_flows.append((exp_date, -amt))  # Expenses are negative cash flows for LPs
             total_operating_expenses_cash_usd += amt
         except: pass
         
@@ -1064,48 +1072,165 @@ def show_overview():
         else:
             st.info("No active capital calls yet.")
 
+def show_fund_expenses():
+    st.title("💼 Fund Operating Expenses")
+    
+    st.markdown("""
+    <div class="dashboard-header">
+    <h1 style="color:white;margin:0;">💼 Octo Fund Operating Expenses</h1>
+    <p style="color:#94a3b8;margin:4px 0 0 0;">Track all operational expenses (Management, Legal, Accounting, etc.)</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    sb = get_supabase()
+    expenses = get_operating_expenses()
+    
+    # Summary metrics
+    total_expenses_usd = 0
+    expenses_by_category = {}
+    
+    for exp in expenses:
+        rate = st.session_state.eur_usd_rate if exp.get("currency") == "EUR" else 1.0
+        amt = float(exp.get("amount", 0)) * rate
+        total_expenses_usd += amt
+        
+        cat = exp.get("category", "Other")
+        expenses_by_category[cat] = expenses_by_category.get(cat, 0) + amt
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Operating Expenses", format_currency(total_expenses_usd, "$"))
+    with col2:
+        st.metric("Number of Expenses", len(expenses))
+    with col3:
+        if expenses_by_category:
+            top_cat = max(expenses_by_category, key=expenses_by_category.get)
+            st.metric("Top Category", f"{top_cat}")
+    
     st.divider()
-    st.markdown("### 📈 Portfolio Valuations Summary")
-    if all_reports:
-        summary_data = []
-        for f in funds:
-            if f["id"] in latest_reports:
-                rep = latest_reports[f["id"]]
-                sym = "€" if f.get("currency") == "EUR" else "$"
+    
+    # Add new expense
+    with st.expander("➕ Add Operating Expense"):
+        with st.form("add_expense_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                exp_date = st.date_input("Expense Date")
+                category_options = [
+                    "Management Fee (ALT Group)", 
+                    "Legal (Walkers, Arnon Segev etc.)", 
+                    "Accounting (SAP, Nurit etc.)", 
+                    "Tax (KPMG)", 
+                    "Government Fees (Registrar)",
+                    "Fund Admin (Zur)",
+                    "Setup Fees",
+                    "Other Professional Fees"
+                ]
+                category = st.selectbox("Category", category_options)
+                description = st.text_input("Description (Optional)")
+            
+            with col2:
+                amount = st.number_input("Amount", min_value=0.0, step=100.0)
+                currency = st.selectbox("Currency", ["USD", "EUR", "ILS"])
+                is_one_time = st.checkbox("One-time expense")
+            
+            if st.form_submit_button("💾 Save Expense", type="primary"):
+                try:
+                    sb.table("fund_operating_expenses").insert({
+                        "expense_date": str(exp_date),
+                        "category": category,
+                        "description": description,
+                        "amount": amount,
+                        "currency": currency,
+                        "is_one_time": is_one_time
+                    }).execute()
+                    log_action("INSERT", "fund_operating_expenses", f"Added expense: {category} - {description}", {})
+                    st.success("✅ Expense added!")
+                    clear_cache_and_rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    st.divider()
+    
+    # Expenses table
+    if expenses:
+        st.markdown("### 📋 All Operating Expenses")
+        
+        exp_data = []
+        for exp in expenses:
+            if exp.get("currency") == "EUR": sym = "€"
+            elif exp.get("currency") == "ILS": sym = "₪"
+            else: sym = "$"
+            
+            exp_data.append({
+                "id": exp["id"],
+                "Date": exp.get("expense_date", ""),
+                "Category": exp.get("category", ""),
+                "Description": exp.get("description", ""),
+                "Amount": format_currency(float(exp.get("amount", 0)), sym),
+                "One-time": "Yes" if exp.get("is_one_time") else "No"
+            })
+        
+        df = pd.DataFrame(exp_data)
+        
+        # Export button
+        col_export, col_space = st.columns([1, 5])
+        with col_export:
+            excel_data = convert_df_to_excel(df.drop(columns=["id"], errors="ignore"))
+            st.download_button(
+                label="📥 Export Excel",
+                data=excel_data,
+                file_name=f"Operating_Expenses_{date.today()}.xlsx",
+                use_container_width=True
+            )
+        
+        st.dataframe(df.drop(columns=["id"]), use_container_width=True, hide_index=True)
+        
+        # Delete expenses
+        st.markdown("#### ⚙️ Manage Expenses")
+        for idx, row in df.iterrows():
+            exp_id = row["id"]
+            with st.expander(f"{row['Category']} - {row['Date']} ({row['Amount']})", expanded=False):
+                col_del = st.columns([5, 1])
+                with col_del[1]:
+                    if st.button("🗑️ Delete", key=f"del_exp_{exp_id}"):
+                        st.session_state[f"confirm_del_exp_{exp_id}"] = True
                 
-                fund_nav = rep.get("nav") or 0
-                
-                f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
-                f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
-                octo_metrics = calculate_fund_metrics(f, f_calls, f_dists)
-                octo_called = octo_metrics["total_called"]
-                
-                rvpi = float(rep.get('rvpi') or 0.0)
-                tvpi = float(rep.get('tvpi') or 1.0)
-                if rvpi > 0:
-                    octo_nav = octo_called * rvpi
-                else:
-                    octo_nav = (octo_called * tvpi) - octo_metrics["total_distributed"]
-                
-                tvpi_str = f"{tvpi:.2f}x" if rep.get("tvpi") is not None else "—"
-                dpi_str = f"{float(rep['dpi']):.2f}x" if rep.get("dpi") is not None else "—"
-                irr_str = f"{float(rep['irr']):.1f}%" if rep.get("irr") is not None else "—"
-                
-                summary_data.append({
-                    "Fund Name": f["name"],
-                    "Latest Report": f"Q{rep['quarter']}/{rep['year']}",
-                    "Fund NAV": format_currency(fund_nav, sym),
-                    "Octo NAV": format_currency(octo_nav, sym),
-                    "TVPI": tvpi_str,
-                    "DPI": dpi_str,
-                    "IRR": irr_str
-                })
-        if summary_data:
-            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("No valuation data available yet.")
+                if st.session_state.get(f"confirm_del_exp_{exp_id}"):
+                    st.warning("Delete this expense?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✅ Yes", key=f"yes_exp_{exp_id}"):
+                            try:
+                                exp = next(e for e in expenses if e["id"] == exp_id)
+                                log_action("DELETE", "fund_operating_expenses", f"Deleted expense: {row['Category']}", exp)
+                                sb.table("fund_operating_expenses").delete().eq("id", exp_id).execute()
+                                st.session_state.pop(f"confirm_del_exp_{exp_id}", None)
+                                clear_cache_and_rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    with c2:
+                        if st.button("❌ Cancel", key=f"no_exp_{exp_id}"):
+                            st.session_state.pop(f"confirm_del_exp_{exp_id}", None)
+                            st.rerun()
     else:
-        st.info("No reports have been uploaded yet.")
+        st.info("No operating expenses recorded yet.")
+    
+    # Breakdown by category
+    if expenses_by_category:
+        st.divider()
+        st.markdown("### 📊 Expenses by Category")
+        
+        fig = px.pie(
+            values=list(expenses_by_category.values()),
+            names=list(expenses_by_category.keys()),
+            title="Operating Expenses Breakdown (USD Eqv)"
+        )
+        fig.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font_color='white'
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 def show_portfolio():
     st.title("📁 Portfolio")
@@ -1948,162 +2073,6 @@ def show_investors():
                                 st.rerun()
                     st.divider()
 
-def show_fund_expenses():
-    st.title("💼 Fund Operating Expenses")
-    
-    st.markdown("""
-    <div class="dashboard-header">
-    <h1 style="color:white;margin:0;">💼 Octo Fund Operating Expenses</h1>
-    <p style="color:#94a3b8;margin:4px 0 0 0;">Track all operational expenses outside capital calls</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    sb = get_supabase()
-    expenses = get_operating_expenses()
-    
-    # Summary metrics
-    total_expenses_usd = 0
-    expenses_by_category = {}
-    
-    for exp in expenses:
-        rate = st.session_state.eur_usd_rate if exp.get("currency") == "EUR" else 1.0
-        amt = float(exp.get("amount", 0)) * rate
-        total_expenses_usd += amt
-        
-        cat = exp.get("category", "Other")
-        expenses_by_category[cat] = expenses_by_category.get(cat, 0) + amt
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Operating Expenses", format_currency(total_expenses_usd, "$"))
-    with col2:
-        st.metric("Number of Expenses", len(expenses))
-    with col3:
-        if expenses_by_category:
-            top_cat = max(expenses_by_category, key=expenses_by_category.get)
-            st.metric("Top Category", f"{top_cat}")
-    
-    st.divider()
-    
-    # Add new expense
-    with st.expander("➕ Add Operating Expense"):
-        with st.form("add_expense_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                exp_date = st.date_input("Expense Date")
-                category_options = [
-                    "Legal (Walker)", 
-                    "Accounting (SAP)", 
-                    "Tax (KPMG)", 
-                    "Insurance", 
-                    "Fund Admin (Zur)",
-                    "Setup Fees",
-                    "Other Professional Fees"
-                ]
-                category = st.selectbox("Category", category_options)
-                description = st.text_input("Description")
-            
-            with col2:
-                amount = st.number_input("Amount", min_value=0.0, step=100.0)
-                currency = st.selectbox("Currency", ["USD", "EUR"])
-                is_one_time = st.checkbox("One-time expense")
-            
-            if st.form_submit_button("💾 Save Expense", type="primary"):
-                try:
-                    sb.table("fund_operating_expenses").insert({
-                        "expense_date": str(exp_date),
-                        "category": category,
-                        "description": description,
-                        "amount": amount,
-                        "currency": currency,
-                        "is_one_time": is_one_time
-                    }).execute()
-                    log_action("INSERT", "fund_operating_expenses", f"Added expense: {category} - {description}", {})
-                    st.success("✅ Expense added!")
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-    
-    st.divider()
-    
-    # Expenses table
-    if expenses:
-        st.markdown("### 📋 All Operating Expenses")
-        
-        exp_data = []
-        for exp in expenses:
-            sym = "€" if exp.get("currency") == "EUR" else "$"
-            exp_data.append({
-                "id": exp["id"],
-                "Date": exp.get("expense_date", ""),
-                "Category": exp.get("category", ""),
-                "Description": exp.get("description", ""),
-                "Amount": format_currency(float(exp.get("amount", 0)), sym),
-                "One-time": "Yes" if exp.get("is_one_time") else "No"
-            })
-        
-        df = pd.DataFrame(exp_data)
-        
-        # Export button
-        col_export, col_space = st.columns([1, 5])
-        with col_export:
-            excel_data = convert_df_to_excel(df.drop(columns=["id"], errors="ignore"))
-            st.download_button(
-                label="📥 Export Excel",
-                data=excel_data,
-                file_name=f"Operating_Expenses_{date.today()}.xlsx",
-                use_container_width=True
-            )
-        
-        st.dataframe(df.drop(columns=["id"]), use_container_width=True, hide_index=True)
-        
-        # Delete expenses
-        st.markdown("#### ⚙️ Manage Expenses")
-        for idx, row in df.iterrows():
-            exp_id = row["id"]
-            with st.expander(f"{row['Category']} - {row['Date']}", expanded=False):
-                col_del = st.columns([5, 1])
-                with col_del[1]:
-                    if st.button("🗑️ Delete", key=f"del_exp_{exp_id}"):
-                        st.session_state[f"confirm_del_exp_{exp_id}"] = True
-                
-                if st.session_state.get(f"confirm_del_exp_{exp_id}"):
-                    st.warning("Delete this expense?")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("✅ Yes", key=f"yes_exp_{exp_id}"):
-                            try:
-                                exp = next(e for e in expenses if e["id"] == exp_id)
-                                log_action("DELETE", "fund_operating_expenses", f"Deleted expense: {row['Category']}", exp)
-                                sb.table("fund_operating_expenses").delete().eq("id", exp_id).execute()
-                                st.session_state.pop(f"confirm_del_exp_{exp_id}", None)
-                                clear_cache_and_rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-                    with c2:
-                        if st.button("❌ Cancel", key=f"no_exp_{exp_id}"):
-                            st.session_state.pop(f"confirm_del_exp_{exp_id}", None)
-                            st.rerun()
-    else:
-        st.info("No operating expenses recorded yet.")
-    
-    # Breakdown by category
-    if expenses_by_category:
-        st.divider()
-        st.markdown("### 📊 Expenses by Category")
-        
-        fig = px.pie(
-            values=list(expenses_by_category.values()),
-            names=list(expenses_by_category.keys()),
-            title="Operating Expenses Breakdown"
-        )
-        fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font_color='white'
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
 def show_reports():
     st.title("📈 Reports & Analytics")
     
@@ -2118,7 +2087,6 @@ def show_reports():
     funds = get_funds()
     all_reports = get_quarterly_reports(None)
     
-    # Add/Upload Section
     st.divider()
     col_add, col_summary = st.columns([1, 1])
     
@@ -2265,14 +2233,11 @@ def show_reports():
     
     st.divider()
     
-    # Reports Table
     if not all_reports:
         st.info("📊 No quarterly reports. Add reports above to see analytics.")
         return
     
     st.markdown("### 📋 All Quarterly Reports")
-    
-    # Build reports table
     reports_data = []
     for r in all_reports:
         fund = next((f for f in funds if f["id"] == r["fund_id"]), None)
@@ -2291,8 +2256,6 @@ def show_reports():
     
     if reports_data:
         df = pd.DataFrame(reports_data)
-        
-        # Export button
         col_export, col_space = st.columns([1, 5])
         with col_export:
             excel_data = convert_df_to_excel(df.drop(columns=["id"], errors="ignore"))
@@ -2303,10 +2266,8 @@ def show_reports():
                 use_container_width=True
             )
         
-        # Display table
         st.dataframe(df.drop(columns=["id"]), use_container_width=True, hide_index=True)
         
-        # Edit/Delete for each report
         st.markdown("#### ⚙️ Manage Reports")
         for idx, row in df.iterrows():
             report_id = row["id"]
@@ -2335,10 +2296,7 @@ def show_reports():
                             st.rerun()
     
     st.divider()
-    
-    # Performance Trends
     st.markdown("### 📈 Performance Trends")
-    
     latest_reports = {}
     for r in all_reports:
         fid = r["fund_id"]
@@ -2352,7 +2310,6 @@ def show_reports():
     fund_names = [f["name"] for f in funds if f["id"] in latest_reports]
     if fund_names:
         tabs = st.tabs(fund_names)
-        
         for i, f in enumerate([fund for fund in funds if fund["id"] in latest_reports]):
             with tabs[i]:
                 fund_reports = [r for r in all_reports if r["fund_id"] == f["id"]]
@@ -2361,230 +2318,24 @@ def show_reports():
                 if len(fund_reports) > 1:
                     labels = [f"Q{r['quarter']}/{r['year']}" for r in fund_reports]
                     
-                    # Multiples Chart
                     fig = go.Figure()
                     if any(r.get("tvpi") for r in fund_reports):
-                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("tvpi") or 0) for r in fund_reports], 
-                                                name="TVPI", line=dict(color="#4ade80", width=3), mode='lines+markers'))
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("tvpi") or 0) for r in fund_reports], name="TVPI", line=dict(color="#4ade80", width=3), mode='lines+markers'))
                     if any(r.get("dpi") for r in fund_reports):
-                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("dpi") or 0) for r in fund_reports], 
-                                                name="DPI", line=dict(color="#60a5fa", width=3), mode='lines+markers'))
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("dpi") or 0) for r in fund_reports], name="DPI", line=dict(color="#60a5fa", width=3), mode='lines+markers'))
                     if any(r.get("rvpi") for r in fund_reports):
-                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("rvpi") or 0) for r in fund_reports], 
-                                                name="RVPI", line=dict(color="#fbbf24", width=3), mode='lines+markers'))
+                        fig.add_trace(go.Scatter(x=labels, y=[float(r.get("rvpi") or 0) for r in fund_reports], name="RVPI", line=dict(color="#fbbf24", width=3), mode='lines+markers'))
                     
-                    fig.update_layout(
-                        title=f"{f['name']} - Multiples Over Time",
-                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0f172a',
-                        font=dict(color='#e2e8f0', size=14, family='Inter'),
-                        xaxis=dict(gridcolor='#1e293b'), yaxis=dict(gridcolor='#1e293b', title="Multiple (x)"),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                        hovermode='x unified'
-                    )
+                    fig.update_layout(title=f"{f['name']} - Multiples Over Time", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0f172a', font=dict(color='#e2e8f0', size=14, family='Inter'), xaxis=dict(gridcolor='#1e293b'), yaxis=dict(gridcolor='#1e293b', title="Multiple (x)"), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hovermode='x unified')
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # IRR Chart
                     if any(r.get("irr") for r in fund_reports):
                         fig_irr = go.Figure()
-                        fig_irr.add_trace(go.Scatter(
-                            x=labels, y=[float(r.get("irr") or 0) for r in fund_reports],
-                            name="IRR", line=dict(color="#a78bfa", width=3),
-                            mode='lines+markers', fill='tozeroy'
-                        ))
-                        fig_irr.update_layout(
-                            title=f"{f['name']} - IRR Trend",
-                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0f172a',
-                            font=dict(color='#e2e8f0', size=14, family='Inter'),
-                            xaxis=dict(gridcolor='#1e293b'), yaxis=dict(gridcolor='#1e293b', title="IRR (%)"),
-                            showlegend=False, hovermode='x unified'
-                        )
+                        fig_irr.add_trace(go.Scatter(x=labels, y=[float(r.get("irr") or 0) for r in fund_reports], name="IRR", line=dict(color="#a78bfa", width=3), mode='lines+markers', fill='tozeroy'))
+                        fig_irr.update_layout(title=f"{f['name']} - IRR Trend", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0f172a', font=dict(color='#e2e8f0', size=14, family='Inter'), xaxis=dict(gridcolor='#1e293b'), yaxis=dict(gridcolor='#1e293b', title="IRR (%)"), showlegend=False, hovermode='x unified')
                         st.plotly_chart(fig_irr, use_container_width=True)
                 else:
                     st.info("Need at least 2 quarterly reports to show trends.")
 
-def show_pipeline():
-    st.title("🔍 Pipeline Funds")
-    pipeline = get_pipeline_funds()
-
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col2:
-        if st.button("➕ Add Manually", use_container_width=True):
-            st.session_state.show_add_pipeline = True
-            st.session_state.show_pdf_upload = False
-    with col3:
-        if st.button("📄 Upload PDF", type="primary", use_container_width=True):
-            st.session_state.show_pdf_upload = True
-            st.session_state.show_add_pipeline = False
-
-    if st.session_state.get("show_pdf_upload"):
-        st.divider()
-        st.markdown("### 📄 Automatic PDF Analysis")
-        uploaded_pdf = st.file_uploader("Upload Fund Pitch Deck (PDF)", type=["pdf"], key="pdf_uploader")
-        if uploaded_pdf:
-            if st.button("🤖 Analyze with AI", type="primary"):
-                with st.spinner("Claude is analyzing the presentation... (30-60 seconds)"):
-                    try:
-                        pdf_bytes = uploaded_pdf.read()
-                        result = analyze_pdf_with_ai(pdf_bytes)
-                        st.session_state.pdf_result = result
-                        st.success("✅ Analysis complete!")
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-        if st.session_state.get("pdf_result"):
-            r = st.session_state.pdf_result
-            st.divider()
-            st.markdown("### 📋 Extracted Details – Review and Confirm")
-            if r.get("key_highlights"):
-                st.info(f"💡 {r.get('key_highlights')}")
-            with st.form("pdf_pipeline_form"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    fund_name = st.text_input("Fund Name", value=r.get("fund_name") or "")
-                    manager = st.text_input("Manager", value=r.get("manager") or "")
-                    strategy_options = ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"]
-                    ai_strategy = r.get("strategy", "Growth")
-                    strategy_idx = strategy_options.index(ai_strategy) if ai_strategy in strategy_options else 0
-                    strategy = st.selectbox("Strategy", strategy_options, index=strategy_idx)
-                    geographic = st.text_input("Geographic Focus", value=r.get("geographic_focus") or "")
-                    sector = st.text_input("Sector Focus", value=r.get("sector_focus") or "")
-                with col2:
-                    fund_size = r.get("fund_size_target") or 0
-                    target_commitment = st.number_input("Our Target Commitment", min_value=0.0, value=0.0, step=500000.0)
-                    currency = st.selectbox("Currency", ["USD", "EUR"], index=0 if r.get("currency") == "USD" else 1)
-                    target_close = st.date_input("Target Close Date")
-                    
-                    priority_opts = ["High", "Medium", "Low"]
-                    priority_ui = st.selectbox("Priority", priority_opts, index=1)
-                    
-                st.divider()
-                st.markdown("**📊 Fund Metrics (For Documentation)**")
-                col3, col4, col5 = st.columns(3)
-                with col3:
-                    st.metric("Target Size", f"${fund_size:,.0f}M" if fund_size else "—")
-                    hard_cap = r.get("fund_size_hard_cap")
-                    st.metric("Hard Cap", f"${hard_cap:,.0f}M" if hard_cap else "—")
-                with col4:
-                    moic_low = r.get("target_return_moic_low")
-                    moic_high = r.get("target_return_moic_high")
-                    st.metric("Target MOIC", f"{moic_low}x-{moic_high}x" if moic_low and moic_high else "—")
-                    irr = r.get("target_irr_gross")
-                    st.metric("Target Gross IRR", f"{irr}%" if irr else "—")
-                with col5:
-                    mgmt = r.get("mgmt_fee_pct")
-                    carry = r.get("carried_interest_pct")
-                    hurdle = r.get("preferred_return_pct")
-                    st.metric("Mgmt Fee", f"{mgmt}%" if mgmt else "—")
-                    st.metric("Carry / Hurdle", f"{carry}% / {hurdle}%" if carry and hurdle else "—")
-                
-                aum_str = f" | Manager AUM: ${r.get('aum_manager')}B" if r.get("aum_manager") else ""
-                irr_str = f" | IRR: {r.get('target_irr_gross')}%" if r.get("target_irr_gross") else ""
-                moic_str = f" | MOIC: {r.get('target_return_moic_low')}x-{r.get('target_return_moic_high')}x" if r.get("target_return_moic_low") else ""
-                notes_default = f"Fund Size: ${fund_size:,.0f}M{moic_str}{irr_str}{aum_str}" if fund_size else ""
-                notes = st.text_area("Notes", value=notes_default)
-                
-                if st.form_submit_button("✅ Create Pipeline Fund + Gantt", type="primary"):
-                    try:
-                        sb = get_supabase()
-                        res = sb.table("pipeline_funds").insert({
-                            "name": fund_name, "manager": manager, "strategy": strategy,
-                            "target_commitment": target_commitment,
-                            "currency": currency, "target_close_date": str(target_close),
-                            "priority": priority_ui.lower(), "notes": notes
-                        }).execute()
-                        fund_id = res.data[0]["id"]
-                        try:
-                            sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
-                        except:
-                            pass
-                        st.success(f"✅ Fund '{fund_name}' created!")
-                        st.session_state.pdf_result = None
-                        st.session_state.show_pdf_upload = False
-                        clear_cache_and_rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-
-    if st.session_state.get("show_add_pipeline"):
-        st.divider()
-        with st.form("add_pipeline_manual"):
-            st.markdown("### ➕ Manual Addition")
-            col1, col2 = st.columns(2)
-            with col1:
-                name = st.text_input("Fund Name")
-                manager = st.text_input("Manager")
-                strategy = st.selectbox("Strategy", ["Growth", "VC", "Tech", "Niche", "Special Situations", "Mid-Market Buyout"])
-            with col2:
-                target_commitment_input = st.number_input("Target Commitment", min_value=0.0, value=0.0, step=500000.0)
-                currency = st.selectbox("Currency", ["USD", "EUR"])
-                target_close = st.date_input("Closing Date")
-                
-                priority_opts = ["High", "Medium", "Low"]
-                priority_ui = st.selectbox("Priority", priority_opts, index=1)
-                
-            notes = st.text_area("Notes")
-            if st.form_submit_button("Create Fund + Gantt", type="primary"):
-                try:
-                    sb = get_supabase()
-                    res = sb.table("pipeline_funds").insert({
-                        "name": name, "manager": manager, "strategy": strategy,
-                        "target_commitment": target_commitment_input, "currency": currency,
-                        "target_close_date": str(target_close), "priority": priority_ui.lower(), "notes": notes
-                    }).execute()
-                    fund_id = res.data[0]["id"]
-                    try:
-                        sb.rpc("create_default_gantt_tasks", {"p_fund_id": fund_id}).execute()
-                    except:
-                        pass
-                    st.success(f"✅ Fund '{name}' created!")
-                    st.session_state.show_add_pipeline = False
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-    st.divider()
-
-    if not pipeline:
-        st.info("No pipeline funds. Click 'Upload PDF' or 'Add Manually'.")
-        return
-
-        for fund in pipeline:
-            fid = fund["id"]
-            with st.expander(f"{fund['name']} | Close: {fund.get('target_close_date','')}", expanded=False):
-                if st.button("🗑️ Delete", key=f"del_btn_{fid}"):
-                    st.session_state[f"confirm_delete_{fid}"] = True
-                
-                if st.session_state.get(f"confirm_delete_{fid}"):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button("✅ Yes, delete", key=f"yes_btn_{fid}", type="primary"):
-                            sb.table("gantt_tasks").delete().eq("pipeline_fund_id", fid).execute()
-                            sb.table("pipeline_funds").delete().eq("id", fid).execute()
-                            st.session_state.pop(f"confirm_delete_{fid}", None); clear_cache_and_rerun()
-                    with c2:
-                        if st.button("❌ Cancel", key=f"no_btn_{fid}"):
-                            st.session_state.pop(f"confirm_delete_{fid}", None); st.rerun()
-                show_gantt(get_gantt_tasks(fid), fund)
-    
-    def show_gantt(tasks, fund):
-        if not tasks: st.write("No tasks."); return
-        fid = fund["id"]
-        done_n = sum(1 for t in tasks if t.get("status") == "done")
-        pct = int(done_n / len(tasks) * 100) if tasks else 0
-        st.progress(pct / 100.0, text=f"Progress: {pct}%")
-        
-        for t in tasks:
-            col1, col2 = st.columns([3, 1])
-            col1.write(f"**{t['task_name']}** ({t.get('status')})")
-            if col2.button("🗑️", key=f"del_task_{t['id']}"):
-                get_supabase().table("gantt_tasks").delete().eq("id", t["id"]).execute(); clear_cache_and_rerun()
-    
-    def show_reports():
-        st.title("📈 Reports & Analytics")
-        all_reports = get_quarterly_reports(None)
-        if all_reports:
-            df = pd.DataFrame(all_reports)
-            st.dataframe(df[["year", "quarter", "nav", "tvpi", "irr"]], use_container_width=True)
-        else:
-            st.info("No reports yet.")
-    
-    if __name__ == "__main__":
-        main()
+if __name__ == "__main__":
+    main()
