@@ -848,13 +848,11 @@ def show_overview():
         f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
         f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
         
-        # Basis / Commitment Tracking
         metrics = calculate_fund_metrics(f, f_calls, f_dists)
         called = metrics["total_called"]
         total_called_basis_usd += called * rate
         total_uncalled_usd += metrics["uncalled"] * rate
         
-        # Cash Flow & Performance Tracking (LP Net Level)
         fund_paid_in = 0
         fund_dist = 0
         
@@ -894,46 +892,25 @@ def show_overview():
         total_paid_in_cash_usd += fund_paid_in
         total_dist_cash_usd += fund_dist
 
-        # --- תיקון: Roll-forward אמיתי לחישוב ה-NAV ---
+        # --- SIMPLE & ROBUST NAV CALCULATION ---
         fund_nav_local = 0
         if f["id"] in latest_reports:
             rep = latest_reports[f["id"]]
             rvpi = float(rep.get('rvpi') or 0.0)
+            tvpi = float(rep.get('tvpi') or 1.0)
             
-            try: rep_date = datetime.strptime(str(rep.get("report_date")).split("T")[0], "%Y-%m-%d").date()
-            except: rep_date = date.today()
-                
-            called_at_report = 0
-            for c in f_calls:
-                if c.get("is_future"): continue
-                p_date_str = c.get("payment_date") or c.get("call_date")
-                if p_date_str:
-                    p_date = datetime.strptime(str(p_date_str).split("T")[0], "%Y-%m-%d").date()
-                    if p_date <= rep_date:
-                        tx_type = c.get("transaction_type", "call")
-                        amt = float(c.get("investments") if float(c.get("investments") or 0) > 0 else c.get("amount") or 0)
-                        if tx_type == "call": called_at_report += amt
-                        elif tx_type in ["repayment", "distribution"] and c.get("affects_called"): called_at_report -= amt
-
-            base_nav = called_at_report * rvpi if rvpi > 0 else called_at_report
-            
-            recent_calls_to_nav = sum(float(c.get("investments") if float(c.get("investments") or 0) > 0 else c.get("amount") or 0) for c in f_calls if not c.get("is_future") and c.get("transaction_type") == "call" and str(c.get("payment_date", "")) > str(rep_date))
-            recent_dists_from_nav = sum(float(d.get("amount") or 0) for d in f_dists if str(d.get("dist_date", "")) > str(rep_date))
-            recent_offsets = sum(float(c.get("amount") or 0) for c in f_calls if not c.get("is_future") and c.get("transaction_type") == "distribution" and str(c.get("payment_date", "")) > str(rep_date))
-            
-            fund_nav_local = base_nav + recent_calls_to_nav - recent_dists_from_nav - recent_offsets
-            fund_nav = fund_nav_local * rate
+            if rvpi > 0:
+                fund_nav_local = called * rvpi
+            else:
+                fund_nav_local = (called * tvpi) - metrics["total_distributed"]
         else:
             fund_nav_local = called
-            fund_nav = called * rate
             
-        # שמירת ה-NAV המקומי עבור בניית הטבלה בהמשך
+        fund_nav = fund_nav_local * rate
         f["calculated_nav_local"] = fund_nav_local
         total_nav_usd += fund_nav
 
-    # -------------------------------------------------------------
-    # ADD FUND OPERATING EXPENSES (Reduces Net IRR & Multiples)
-    # -------------------------------------------------------------
+    # ADD FUND OPERATING EXPENSES
     operating_expenses = get_operating_expenses()
     total_operating_expenses_cash_usd = 0
     for exp in operating_expenses:
@@ -1002,7 +979,6 @@ def show_overview():
                 pct = f"{total_called/c_val*100:.1f}%" if c_val > 0 else "—"
                 currency_sym = "€" if f.get("currency") == "EUR" else "$"
                 
-                # משיכת ה-NAV שכבר חושב נכון בלולאה הקודמת
                 octo_nav = f.get("calculated_nav_local", total_called)
                     
                 rows.append({
@@ -1017,7 +993,7 @@ def show_overview():
                 
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
-            st.info("No funds in the system")
+            st.info("No funds in the system") 
 
     with col2:
         st.subheader("🔔 Upcoming Events")
