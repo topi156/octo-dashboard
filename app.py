@@ -866,7 +866,6 @@ def show_overview():
                 p_date = datetime.strptime(str(p_date_str).split("T")[0], "%Y-%m-%d").date()
                 tx_type = c.get("transaction_type", "call")
                 
-                # Amount represents actual Cash Out, eq is interest paid
                 amt = float(c.get("amount") or 0) * rate
                 eq = float(c.get("equalisation_interest") or 0) * rate
                 
@@ -875,7 +874,6 @@ def show_overview():
                     fund_paid_in += flow
                     portfolio_cash_flows.append((p_date, -flow))
                 elif tx_type == "repayment":
-                    # Repayment acts as money returned to LP
                     fund_paid_in -= amt
                     portfolio_cash_flows.append((p_date, amt))
                 elif tx_type == "distribution":
@@ -896,17 +894,41 @@ def show_overview():
         total_paid_in_cash_usd += fund_paid_in
         total_dist_cash_usd += fund_dist
 
-        # NAV Evaluation
+        # --- תיקון: Roll-forward אמיתי לחישוב ה-NAV ---
+        fund_nav_local = 0
         if f["id"] in latest_reports:
-            rvpi = float(latest_reports[f["id"]].get("rvpi") or 0.0)
-            tvpi = float(latest_reports[f["id"]].get("tvpi") or 1.0)
-            if rvpi > 0:
-                fund_nav = (called * rvpi) * rate
-            else:
-                fund_nav = ((called * tvpi) - metrics["total_distributed"]) * rate
+            rep = latest_reports[f["id"]]
+            rvpi = float(rep.get('rvpi') or 0.0)
+            
+            try: rep_date = datetime.strptime(str(rep.get("report_date")).split("T")[0], "%Y-%m-%d").date()
+            except: rep_date = date.today()
+                
+            called_at_report = 0
+            for c in f_calls:
+                if c.get("is_future"): continue
+                p_date_str = c.get("payment_date") or c.get("call_date")
+                if p_date_str:
+                    p_date = datetime.strptime(str(p_date_str).split("T")[0], "%Y-%m-%d").date()
+                    if p_date <= rep_date:
+                        tx_type = c.get("transaction_type", "call")
+                        amt = float(c.get("investments") if float(c.get("investments") or 0) > 0 else c.get("amount") or 0)
+                        if tx_type == "call": called_at_report += amt
+                        elif tx_type in ["repayment", "distribution"] and c.get("affects_called"): called_at_report -= amt
+
+            base_nav = called_at_report * rvpi if rvpi > 0 else called_at_report
+            
+            recent_calls_to_nav = sum(float(c.get("investments") if float(c.get("investments") or 0) > 0 else c.get("amount") or 0) for c in f_calls if not c.get("is_future") and c.get("transaction_type") == "call" and str(c.get("payment_date", "")) > str(rep_date))
+            recent_dists_from_nav = sum(float(d.get("amount") or 0) for d in f_dists if str(d.get("dist_date", "")) > str(rep_date))
+            recent_offsets = sum(float(c.get("amount") or 0) for c in f_calls if not c.get("is_future") and c.get("transaction_type") == "distribution" and str(c.get("payment_date", "")) > str(rep_date))
+            
+            fund_nav_local = base_nav + recent_calls_to_nav - recent_dists_from_nav - recent_offsets
+            fund_nav = fund_nav_local * rate
         else:
+            fund_nav_local = called
             fund_nav = called * rate
             
+        # שמירת ה-NAV המקומי עבור בניית הטבלה בהמשך
+        f["calculated_nav_local"] = fund_nav_local
         total_nav_usd += fund_nav
 
     # -------------------------------------------------------------
@@ -921,7 +943,7 @@ def show_overview():
             exp_date = datetime.strptime(str(exp_date_str).split("T")[0], "%Y-%m-%d").date()
             rate = st.session_state.eur_usd_rate if exp.get("currency") == "EUR" else 1.0
             amt = float(exp.get("amount", 0)) * rate
-            portfolio_cash_flows.append((exp_date, -amt))  # Expenses are negative cash flows for LPs
+            portfolio_cash_flows.append((exp_date, -amt)) 
             total_operating_expenses_cash_usd += amt
         except: pass
         
@@ -965,59 +987,37 @@ def show_overview():
 
     with col1:
         st.subheader("📋 Funds Status")
-    if funds:
-        rows = []
-        for f in funds:
-            f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
-            f_dists = get_distributions(f["id"])
-            f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
-            total_called = f_metrics["total_called"]
-            
-            c_val = float(f.get("commitment") or 0)
-            if 0 < c_val <= 1000:
-                c_val *= 1_000_000
+        if funds:
+            rows = []
+            for f in funds:
+                f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
+                f_dists = get_distributions(f["id"])
+                f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+                total_called = f_metrics["total_called"]
                 
-            pct = f"{total_called/c_val*100:.1f}%" if c_val > 0 else "—"
-            currency_sym = "€" if f.get("currency") == "EUR" else "$"
-            
-            # Calculate Octo NAV (Proper Roll-forward)
-            octo_nav = 0
-            if f["id"] in latest_reports:
-                rep = latest_reports[f["id"]]
-                rvpi = float(rep.get('rvpi') or 0.0)
-                
-                # 1. Calculate historical Paid-In strictly up to the report date
-                try:
-                    rep_date = datetime.strptime(str(rep.get("report_date")).split("T")[0], "%Y-%m-%d").date()
-                except:
-                    rep_date = date.today()
+                c_val = float(f.get("commitment") or 0)
+                if 0 < c_val <= 1000:
+                    c_val *= 1_000_000
                     
-                called_at_report = 0
-                for c in f_calls:
-                    if c.get("is_future"): continue
-                    p_date_str = c.get("payment_date") or c.get("call_date")
-                    if p_date_str:
-                        p_date = datetime.strptime(str(p_date_str).split("T")[0], "%Y-%m-%d").date()
-                        if p_date <= rep_date:
-                            # Add historical logic here (impact of call/repayment up to report date)
-                            tx_type = c.get("transaction_type", "call")
-                            amt = float(c.get("investments") or c.get("amount") or 0)
-                            if tx_type == "call": called_at_report += amt
-                            elif tx_type in ["repayment", "distribution"] and c.get("affects_called"): called_at_report -= amt
-            
-                # 2. Base NAV at report date
-                base_nav = called_at_report * rvpi if rvpi > 0 else called_at_report
+                pct = f"{total_called/c_val*100:.1f}%" if c_val > 0 else "—"
+                currency_sym = "€" if f.get("currency") == "EUR" else "$"
                 
-                # 3. Roll-forward: Add net cash flows that happened AFTER the report
-                recent_calls_to_nav = sum(float(c.get("investments") or c.get("amount") or 0) for c in f_calls if not c.get("is_future") and c.get("transaction_type") == "call" and str(c.get("payment_date", "")) > str(rep_date))
-                recent_dists_from_nav = sum(float(d.get("amount") or 0) for d in f_dists if str(d.get("dist_date", "")) > str(rep_date))
-                # Also subtract non-recallable distributions logged as calls (Equalisation offsets)
-                recent_offsets = sum(float(c.get("amount") or 0) for c in f_calls if not c.get("is_future") and c.get("transaction_type") == "distribution" and str(c.get("payment_date", "")) > str(rep_date))
+                # משיכת ה-NAV שכבר חושב נכון בלולאה הקודמת
+                octo_nav = f.get("calculated_nav_local", total_called)
+                    
+                rows.append({
+                    "Fund": f["name"],
+                    "Currency": f.get("currency", "USD"),
+                    "Commitment": format_currency(c_val, currency_sym),
+                    "Total Called": format_currency(total_called, currency_sym) if total_called > 0 else "—",
+                    "Called %": pct,
+                    "Octo NAV": format_currency(octo_nav, currency_sym) if octo_nav > 0 else "—",
+                    "Status": f.get("status", "active").capitalize(),
+                })
                 
-                octo_nav = base_nav + recent_calls_to_nav - recent_dists_from_nav - recent_offsets
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    else:
-        st.info("No funds in the system") 
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No funds in the system")
 
     with col2:
         st.subheader("🔔 Upcoming Events")
