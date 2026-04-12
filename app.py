@@ -117,7 +117,7 @@ FUND PRESENTATION TEXT:
 {pdf_text}"""
 
     payload = {
-        "model": "anthropic/claude-3.5-sonnet",
+        "model": "anthropic/claude-sonnet-4",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 2000
     }
@@ -201,7 +201,7 @@ CAPITAL CALL TEXT:
 {pdf_text}"""
 
     payload = {
-        "model": "anthropic/claude-3.5-sonnet",
+        "model": "anthropic/claude-sonnet-4",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 1000
     }
@@ -242,7 +242,7 @@ REPORT TEXT:
 {report_text}"""
 
     payload = {
-        "model": "anthropic/claude-3.5-sonnet",
+        "model": "anthropic/claude-sonnet-4",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 1000
     }
