@@ -1539,84 +1539,323 @@ def show_fund_detail(fund):
         st.divider()
         st.markdown("**➕ Or Enter Details Manually**")
         
-        ai_data = st.session_state.get(f"cc_ai_result_{fund['id']}", {})
-        
-        def_call_date = date.today()
-        if ai_data.get("call_date"):
-            try: def_call_date = datetime.strptime(ai_data["call_date"], "%Y-%m-%d").date()
-            except: pass
-            
-        def_pay_date = date.today()
-        if ai_data.get("payment_date"):
-            try: def_pay_date = datetime.strptime(ai_data["payment_date"], "%Y-%m-%d").date()
-            except: pass
+        entry_mode = st.radio(
+            "Entry Mode",
+            ["Simple Capital Call", "Net Capital Call / Equalisation Bundle"],
+            horizontal=True,
+            key=f"call_entry_mode_{fund['id']}"
+        )
 
-        with st.form(f"add_call_{fund['id']}"):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                call_num = st.number_input("Call Number", min_value=1, value=len(calls)+1)
-                call_date = st.date_input("Call Date", value=def_call_date)
-                payment_date = st.date_input("Payment Date", value=def_pay_date)
+        if entry_mode == "Simple Capital Call":
+            ai_data = st.session_state.get(f"cc_ai_result_{fund['id']}", {})
+        
+            def_call_date = date.today()
+            if ai_data.get("call_date"):
+                try: def_call_date = datetime.strptime(ai_data["call_date"], "%Y-%m-%d").date()
+                except: pass
                 
-                tx_type = st.selectbox(
-                    "Transaction Type",
-                    ["call", "repayment", "distribution"],
-                    format_func=lambda x: {
-                        "call": "💰 Capital Call",
-                        "repayment": "🔄 Capital Repayment (Recallable)",
-                        "distribution": "📤 Capital Distribution (Non-recallable)"
-                    }[x]
-                )
+            def_pay_date = date.today()
+            if ai_data.get("payment_date"):
+                try: def_pay_date = datetime.strptime(ai_data["payment_date"], "%Y-%m-%d").date()
+                except: pass
+
+            with st.form(f"add_call_{fund['id']}"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    call_num = st.number_input("Call Number", min_value=1, value=len(calls)+1)
+                    call_date = st.date_input("Call Date", value=def_call_date)
+                    payment_date = st.date_input("Payment Date", value=def_pay_date)
                 
-            with col2:
-                amount = st.number_input("Cash Amount (Net Call)", min_value=0.0, value=float(ai_data.get("amount", 0)))
-                investments = st.number_input("Investments (Commitment Impact)", min_value=0.0, value=float(ai_data.get("investments", 0)))
-                mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
+                    tx_type = st.selectbox(
+                        "Transaction Type",
+                        ["call", "repayment", "distribution"],
+                        format_func=lambda x: {
+                            "call": "💰 Capital Call",
+                            "repayment": "🔄 Capital Repayment (Recallable)",
+                            "distribution": "📤 Capital Distribution (Non-recallable)"
+                        }[x]
+                    )
                 
-            with col3:
-                fund_expenses = st.number_input("Fund Expenses & Other", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
+                with col2:
+                    amount = st.number_input("Cash Amount (Net Call)", min_value=0.0, value=float(ai_data.get("amount", 0)))
+                    investments = st.number_input("Investments (Commitment Impact)", min_value=0.0, value=float(ai_data.get("investments", 0)))
+                    mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
                 
-                default_recall = (tx_type == "repayment")
-                is_recallable = st.checkbox(
-                    "Reduces Total Called", 
-                    value=default_recall,
-                    help="Check if this amount reduces the Total Called (usually True for Repayment, False for Distribution)"
-                )
+                with col3:
+                    fund_expenses = st.number_input("Fund Expenses & Other", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
                 
-                equalisation_interest = st.number_input(
-                    "Equalisation Interest", 
-                    min_value=0.0, 
-                    value=0.0,
-                    help="Interest paid by late entrants - does NOT count toward Total Called"
-                )
+                    default_recall = (tx_type == "repayment")
+                    is_recallable = st.checkbox(
+                        "Reduces Total Called", 
+                        value=default_recall,
+                        help="Check if this amount reduces the Total Called (usually True for Repayment, False for Distribution)"
+                    )
                 
-                is_future = st.checkbox("Future Call (Show Alert)")
-                notes = st.text_input("Notes")
+                    equalisation_interest = st.number_input(
+                        "Equalisation Interest", 
+                        min_value=0.0, 
+                        value=0.0,
+                        help="Interest paid by late entrants - does NOT count toward Total Called"
+                    )
                 
-            if st.form_submit_button("Save Call to System", type="primary"):
-                try:
-                    get_supabase().table("capital_calls").insert({
-                        "fund_id": fund["id"], 
-                        "call_number": call_num,
-                        "call_date": str(call_date), 
-                        "payment_date": str(payment_date),
-                        "transaction_type": tx_type,
-                        "amount": amount, 
-                        "investments": investments,
-                        "mgmt_fee": mgmt_fee, 
-                        "fund_expenses": fund_expenses,
-                        "is_recallable": is_recallable,
-                        "affects_called": is_recallable,
-                        "equalisation_interest": equalisation_interest,
-                        "is_future": is_future, 
-                        "notes": notes
-                    }).execute()
+                    is_future = st.checkbox("Future Call (Show Alert)")
+                    notes = st.text_input("Notes")
+                
+                if st.form_submit_button("Save Call to System", type="primary"):
+                    try:
+                        get_supabase().table("capital_calls").insert({
+                            "fund_id": fund["id"], 
+                            "call_number": call_num,
+                            "call_date": str(call_date), 
+                            "payment_date": str(payment_date),
+                            "transaction_type": tx_type,
+                            "amount": amount, 
+                            "investments": investments,
+                            "mgmt_fee": mgmt_fee, 
+                            "fund_expenses": fund_expenses,
+                            "is_recallable": is_recallable,
+                            "affects_called": is_recallable,
+                            "equalisation_interest": equalisation_interest,
+                            "is_future": is_future, 
+                            "notes": notes
+                        }).execute()
                                 
-                    st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
-                    st.success("✅ Saved!")
-                    clear_cache_and_rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                        st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
+                        st.success("✅ Saved!")
+                        clear_cache_and_rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+        else:
+            st.markdown("**Net Capital Call / Equalisation Bundle**")
+            b_col1, b_col2, b_col3 = st.columns(3)
+            with b_col1:
+                bundle_call_num = st.number_input(
+                    "Bundle Call Number",
+                    min_value=1,
+                    value=len(calls) + 1,
+                    key=f"bundle_call_num_{fund['id']}"
+                )
+                bundle_call_date = st.date_input(
+                    "Bundle Call Date",
+                    value=date.today(),
+                    key=f"bundle_call_date_{fund['id']}"
+                )
+            with b_col2:
+                bundle_payment_date = st.date_input(
+                    "Bundle Payment Date",
+                    value=date.today(),
+                    key=f"bundle_payment_date_{fund['id']}"
+                )
+                bundle_is_future = st.checkbox(
+                    "Bundle Future Call",
+                    key=f"bundle_future_{fund['id']}"
+                )
+            with b_col3:
+                bundle_note_prefix = st.text_input(
+                    "Shared Note Prefix",
+                    value="Net Capital Call / Equalisation Bundle",
+                    key=f"bundle_note_prefix_{fund['id']}"
+                )
+                expected_wire = st.number_input(
+                    "Optional Expected Wire Amount",
+                    value=0.0,
+                    key=f"bundle_expected_wire_{fund['id']}"
+                )
+
+            component_types = [
+                "Gross capital call",
+                "Recallable repayment",
+                "Non-recallable distribution",
+                "Realised gain distribution",
+                "Equalisation interest outside commitment"
+            ]
+
+            component_rows = []
+            st.markdown("**Components**")
+            h_enabled, h_type, h_desc, h_cash, h_commit, h_eq = st.columns([0.7, 2.2, 2.6, 1.4, 1.4, 1.4])
+            h_enabled.markdown("Use")
+            h_type.markdown("Component Type")
+            h_desc.markdown("Description")
+            h_cash.markdown("Cash Amount")
+            h_commit.markdown("Commitment Impact")
+            h_eq.markdown("Equalisation Interest")
+            for row_idx in range(10):
+                c_enabled, c_type, c_desc, c_cash, c_commit, c_eq = st.columns([0.7, 2.2, 2.6, 1.4, 1.4, 1.4])
+                with c_enabled:
+                    enabled = st.checkbox("Use", key=f"bundle_enabled_{fund['id']}_{row_idx}")
+                with c_type:
+                    component_type = st.selectbox(
+                        "Component Type",
+                        component_types,
+                        key=f"bundle_type_{fund['id']}_{row_idx}",
+                        label_visibility="collapsed"
+                    )
+                with c_desc:
+                    description = st.text_input(
+                        "Description",
+                        key=f"bundle_desc_{fund['id']}_{row_idx}",
+                        label_visibility="collapsed"
+                    )
+                with c_cash:
+                    cash_amount = st.number_input(
+                        "Cash Amount",
+                        min_value=0.0,
+                        value=0.0,
+                        key=f"bundle_cash_{fund['id']}_{row_idx}",
+                        label_visibility="collapsed"
+                    )
+                with c_commit:
+                    commitment_impact = st.number_input(
+                        "Commitment Impact",
+                        min_value=0.0,
+                        value=0.0,
+                        key=f"bundle_commit_{fund['id']}_{row_idx}",
+                        label_visibility="collapsed"
+                    )
+                with c_eq:
+                    row_eq_interest = st.number_input(
+                        "Equalisation Interest",
+                        min_value=0.0,
+                        value=0.0,
+                        key=f"bundle_eq_{fund['id']}_{row_idx}",
+                        label_visibility="collapsed"
+                    )
+
+                if enabled:
+                    component_rows.append({
+                        "component_type": component_type,
+                        "description": description,
+                        "cash_amount": cash_amount,
+                        "commitment_impact": commitment_impact,
+                        "equalisation_interest": row_eq_interest
+                    })
+
+            validation_errors = []
+            preview_rows = []
+            rows_to_insert = []
+            net_wire = 0.0
+
+            if not component_rows:
+                validation_errors.append("Add at least one enabled component.")
+
+            for idx, row in enumerate(component_rows, start=1):
+                component_type = row["component_type"]
+                cash_amount = float(row["cash_amount"] or 0)
+                commitment_impact = float(row["commitment_impact"] or 0)
+                row_eq_interest = float(row["equalisation_interest"] or 0)
+                description = row["description"].strip()
+
+                if cash_amount < 0 or commitment_impact < 0 or row_eq_interest < 0:
+                    validation_errors.append(f"Component {idx}: amounts cannot be negative.")
+
+                transaction_type = "call"
+                amount = cash_amount
+                investments = commitment_impact
+                affects_called = False
+                eq_interest = 0.0
+                component_note = description or component_type
+
+                if component_type == "Gross capital call":
+                    if row_eq_interest > 0:
+                        validation_errors.append(f"Component {idx}: use a separate equalisation interest component for interest outside commitment.")
+                    if cash_amount <= 0:
+                        validation_errors.append(f"Component {idx}: gross capital call requires a cash amount.")
+                    if commitment_impact <= 0:
+                        validation_errors.append(f"Component {idx}: gross capital call requires a commitment impact.")
+                elif component_type == "Recallable repayment":
+                    transaction_type = "repayment"
+                    amount = cash_amount
+                    investments = 0.0
+                    affects_called = True
+                    if commitment_impact > 0 or row_eq_interest > 0:
+                        validation_errors.append(f"Component {idx}: recallable repayment should only use cash amount.")
+                    if cash_amount <= 0:
+                        validation_errors.append(f"Component {idx}: recallable repayment requires a cash amount.")
+                elif component_type == "Non-recallable distribution":
+                    transaction_type = "distribution"
+                    amount = cash_amount
+                    investments = 0.0
+                    if commitment_impact > 0 or row_eq_interest > 0:
+                        validation_errors.append(f"Component {idx}: non-recallable distribution should only use cash amount.")
+                    if cash_amount <= 0:
+                        validation_errors.append(f"Component {idx}: non-recallable distribution requires a cash amount.")
+                elif component_type == "Realised gain distribution":
+                    transaction_type = "distribution"
+                    amount = cash_amount
+                    investments = 0.0
+                    if commitment_impact > 0 or row_eq_interest > 0:
+                        validation_errors.append(f"Component {idx}: realised gain distribution should only use cash amount.")
+                    if cash_amount <= 0:
+                        validation_errors.append(f"Component {idx}: realised gain distribution requires a cash amount.")
+                    if "realised gain" not in component_note.lower():
+                        component_note = f"Realised gain - {component_note}"
+                elif component_type == "Equalisation interest outside commitment":
+                    amount = 0.0
+                    investments = 0.0
+                    eq_interest = row_eq_interest
+                    if cash_amount > 0 or commitment_impact > 0:
+                        validation_errors.append(f"Component {idx}: equalisation interest outside commitment should only use equalisation interest.")
+                    if row_eq_interest <= 0:
+                        validation_errors.append(f"Component {idx}: equalisation interest component requires an interest amount.")
+
+                if transaction_type == "call":
+                    net_wire += amount + eq_interest
+                else:
+                    net_wire -= amount
+
+                note = f"{bundle_note_prefix}: {component_note}" if bundle_note_prefix else component_note
+                preview_rows.append({
+                    "Component": component_type,
+                    "Transaction Type": transaction_type,
+                    "Amount": amount,
+                    "Investments": investments,
+                    "Equalisation Interest": eq_interest,
+                    "Affects Called": affects_called,
+                    "Notes": note
+                })
+                rows_to_insert.append({
+                    "fund_id": fund["id"],
+                    "call_number": bundle_call_num,
+                    "call_date": str(bundle_call_date),
+                    "payment_date": str(bundle_payment_date),
+                    "transaction_type": transaction_type,
+                    "amount": amount,
+                    "investments": investments,
+                    "mgmt_fee": 0.0,
+                    "fund_expenses": 0.0,
+                    "is_recallable": affects_called,
+                    "affects_called": affects_called,
+                    "equalisation_interest": eq_interest,
+                    "is_future": bundle_is_future,
+                    "notes": note
+                })
+
+            if preview_rows:
+                st.markdown("**Preview Rows to Insert**")
+                st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
+
+            st.metric("Calculated Net Wire Amount", format_currency(net_wire, currency_sym))
+            if expected_wire != 0 and abs(net_wire - expected_wire) > 0.01:
+                st.warning(
+                    f"Expected wire differs by {format_currency(abs(net_wire - expected_wire), currency_sym)}. "
+                    "Review the components before saving."
+                )
+
+            if validation_errors:
+                for err in validation_errors:
+                    st.error(err)
+
+            if st.button("Save Bundle Components", type="primary", key=f"save_bundle_{fund['id']}"):
+                if validation_errors:
+                    st.error("Bundle was not saved. Fix validation errors above and try again.")
+                else:
+                    try:
+                        get_supabase().table("capital_calls").insert(rows_to_insert).execute()
+                        st.success("✅ Bundle components saved!")
+                        clear_cache_and_rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
     with tab2:
         if dists:
