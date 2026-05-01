@@ -876,6 +876,7 @@ def show_overview():
                     portfolio_cash_flows.append((p_date, amt))
                 elif tx_type == "distribution":
                     fund_dist += amt
+                    fund_paid_in -= amt
                     portfolio_cash_flows.append((p_date, amt))
             except: pass
             
@@ -1000,7 +1001,8 @@ def show_overview():
         st.metric("Portfolio Net IRR", irr_display)
 
     st.divider()
-    col1, col2 = st.columns([2, 1])
+    col1 = st.container()
+    col2 = st.container()
 
     with col1:
         st.subheader("📋 Funds Status")
@@ -1031,7 +1033,7 @@ def show_overview():
                     "Status": f.get("status", "active").capitalize(),
                 })
                 
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
         else:
             st.info("No funds in the system") 
 
