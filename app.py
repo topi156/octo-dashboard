@@ -1628,6 +1628,12 @@ def show_fund_detail(fund):
 
         else:
             st.markdown("**Net Capital Call / Equalisation Bundle**")
+            fund_name_for_bundle = str(fund.get("name") or "").strip()
+            st.info(f"You are entering a bundle for: {fund_name_for_bundle or 'Unnamed fund'} ({fund.get('currency', 'USD')})")
+            valid_bundle_fund = bool(fund_name_for_bundle)
+            if not valid_bundle_fund:
+                st.error("Cannot save bundle for an unnamed fund. Please select a valid fund.")
+
             b_col1, b_col2, b_col3 = st.columns(3)
             with b_col1:
                 bundle_call_num = st.number_input(
@@ -1846,8 +1852,17 @@ def show_fund_detail(fund):
                 for err in validation_errors:
                     st.error(err)
 
-            if st.button("Save Bundle Components", type="primary", key=f"save_bundle_{fund['id']}"):
-                if validation_errors:
+            confirm_bundle_fund = False
+            if valid_bundle_fund:
+                confirm_bundle_fund = st.checkbox(
+                    "I confirm this notice belongs to the selected fund.",
+                    key=f"confirm_bundle_fund_{fund['id']}"
+                )
+
+            if valid_bundle_fund and st.button("Save Bundle Components", type="primary", key=f"save_bundle_{fund['id']}"):
+                if validation_errors or not confirm_bundle_fund:
+                    if not confirm_bundle_fund:
+                        st.error("Confirm this notice belongs to the selected fund before saving.")
                     st.error("Bundle was not saved. Fix validation errors above and try again.")
                 else:
                     try:
