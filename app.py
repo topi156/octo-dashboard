@@ -898,11 +898,51 @@ def show_overview():
             rep = latest_reports[f["id"]]
             rvpi = float(rep.get('rvpi') or 0.0)
             tvpi = float(rep.get('tvpi') or 1.0)
+            rep_nav = rep.get("nav")
+            rep_date_str = rep.get("report_date")
             
-            if rvpi > 0:
-                fund_nav_local = called * rvpi
-            else:
-                fund_nav_local = (called * tvpi) - metrics["total_distributed"]
+            try:
+                if rep_nav is None or rep_nav == "" or not rep_date_str:
+                    raise ValueError("Missing report NAV or date")
+                    
+                rep_date = datetime.strptime(str(rep_date_str).split("T")[0], "%Y-%m-%d").date()
+                fund_nav_local = float(rep_nav)
+                
+                for c in f_calls:
+                    if c.get("is_future"):
+                        continue
+                    tx_type = c.get("transaction_type", "call")
+                    c_date_str = c.get("payment_date") or c.get("call_date")
+                    if not c_date_str:
+                        continue
+                    try:
+                        c_date = datetime.strptime(str(c_date_str).split("T")[0], "%Y-%m-%d").date()
+                    except:
+                        continue
+                    if c_date <= rep_date:
+                        continue
+                        
+                    if tx_type == "call":
+                        amount = c.get("investments") if c.get("investments") is not None else c.get("amount")
+                        fund_nav_local += float(amount or 0)
+                    elif tx_type == "distribution":
+                        fund_nav_local -= float(c.get("amount") or 0)
+                        
+                for d in f_dists:
+                    d_date_str = d.get("dist_date")
+                    if not d_date_str:
+                        continue
+                    try:
+                        d_date = datetime.strptime(str(d_date_str).split("T")[0], "%Y-%m-%d").date()
+                    except:
+                        continue
+                    if d_date > rep_date:
+                        fund_nav_local -= float(d.get("amount") or 0)
+            except:
+                if rvpi > 0:
+                    fund_nav_local = called * rvpi
+                else:
+                    fund_nav_local = (called * tvpi) - metrics["total_distributed"]
         else:
             fund_nav_local = called
             
