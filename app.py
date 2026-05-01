@@ -970,7 +970,7 @@ def show_overview():
     # Process Portfolio Level Analytics
     portfolio_cash_flows.append((date.today(), total_nav_usd))
     portfolio_irr = calculate_xirr(portfolio_cash_flows)
-    portfolio_tvpi = (total_dist_cash_usd + total_nav_usd) / total_paid_in_cash_usd if total_paid_in_cash_usd > 0 else 0
+    portfolio_tvpi = (total_dist_cash_usd + total_nav_usd) / total_called_basis_usd if total_called_basis_usd > 0 else 0
 
     irr_display = "—"
     if isinstance(portfolio_irr, float):
