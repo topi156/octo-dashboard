@@ -481,101 +481,104 @@ def log_action(action: str, table_name: str, details: str, old_data: dict = None
     except Exception:
         pass
 
+def current_cache_user_key():
+    return st.session_state.get("user_email") or st.session_state.get("username") or "anonymous"
+
 @st.cache_data(ttl=600)
-def fetch_all_funds(_sb):
+def fetch_all_funds(_sb, user_key):
     try: return _sb.table("funds").select("*").order("name").execute().data or []
     except Exception as e: st.error(f"Error loading funds: {e}"); return []
 
 def get_funds():
-    return fetch_all_funds(get_supabase())
+    return fetch_all_funds(get_supabase(), current_cache_user_key())
 
 @st.cache_data(ttl=600)
-def fetch_all_capital_calls(_sb):
+def fetch_all_capital_calls(_sb, user_key):
     try: return _sb.table("capital_calls").select("*").order("call_number").execute().data or []
     except: return []
 
 def get_capital_calls(fund_id=None):
-    data = fetch_all_capital_calls(get_supabase())
+    data = fetch_all_capital_calls(get_supabase(), current_cache_user_key())
     if fund_id: return [d for d in data if d["fund_id"] == fund_id]
     return data
 
 @st.cache_data(ttl=600)
-def fetch_all_distributions(_sb):
+def fetch_all_distributions(_sb, user_key):
     try: return _sb.table("distributions").select("*").order("dist_date").execute().data or []
     except: return []
 
 def get_distributions(fund_id=None):
-    data = fetch_all_distributions(get_supabase())
+    data = fetch_all_distributions(get_supabase(), current_cache_user_key())
     if fund_id: return [d for d in data if d["fund_id"] == fund_id]
     return data
 
 @st.cache_data(ttl=600)
-def fetch_all_quarterly_reports(_sb):
+def fetch_all_quarterly_reports(_sb, user_key):
     try: return _sb.table("quarterly_reports").select("*").order("year,quarter").execute().data or []
     except: return []
 
 def get_quarterly_reports(fund_id=None):
-    data = fetch_all_quarterly_reports(get_supabase())
+    data = fetch_all_quarterly_reports(get_supabase(), current_cache_user_key())
     if fund_id: return [d for d in data if d["fund_id"] == fund_id]
     return data
 
 @st.cache_data(ttl=600)
-def fetch_all_pipeline_funds(_sb):
+def fetch_all_pipeline_funds(_sb, user_key):
     try: return _sb.table("pipeline_funds").select("*").order("target_close_date").execute().data or []
     except: return []
 
 def get_pipeline_funds():
-    return fetch_all_pipeline_funds(get_supabase())
+    return fetch_all_pipeline_funds(get_supabase(), current_cache_user_key())
 
 @st.cache_data(ttl=600)
-def fetch_all_gantt_tasks(_sb):
+def fetch_all_gantt_tasks(_sb, user_key):
     try: return _sb.table("gantt_tasks").select("*").order("start_date").execute().data or []
     except: return []
 
 def get_gantt_tasks(pipeline_fund_id=None):
-    data = fetch_all_gantt_tasks(get_supabase())
+    data = fetch_all_gantt_tasks(get_supabase(), current_cache_user_key())
     if pipeline_fund_id: return [d for d in data if d["pipeline_fund_id"] == pipeline_fund_id]
     return data
 
 @st.cache_data(ttl=600)
-def fetch_all_investors(_sb):
+def fetch_all_investors(_sb, user_key):
     try: return _sb.table("investors").select("*").execute().data or []
     except: return []
 
 def get_investors():
-    return fetch_all_investors(get_supabase())
+    return fetch_all_investors(get_supabase(), current_cache_user_key())
 
 @st.cache_data(ttl=600)
-def fetch_all_lp_calls(_sb):
+def fetch_all_lp_calls(_sb, user_key):
     try: return _sb.table("lp_calls").select("*").order("call_date").execute().data or []
     except: return []
 
 def get_lp_calls():
-    return fetch_all_lp_calls(get_supabase())
+    return fetch_all_lp_calls(get_supabase(), current_cache_user_key())
 
 @st.cache_data(ttl=600)
-def fetch_all_lp_payments(_sb):
+def fetch_all_lp_payments(_sb, user_key):
     try: return _sb.table("lp_payments").select("*").execute().data or []
     except: return []
 
 def get_lp_payments():
-    return fetch_all_lp_payments(get_supabase())
+    return fetch_all_lp_payments(get_supabase(), current_cache_user_key())
 
 @st.cache_data(ttl=600)
-def fetch_all_audit_logs(_sb):
+def fetch_all_audit_logs(_sb, user_key):
     try: return _sb.table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute().data or []
     except: return []
 
 def get_audit_logs():
-    return fetch_all_audit_logs(get_supabase())
+    return fetch_all_audit_logs(get_supabase(), current_cache_user_key())
 
 @st.cache_data(ttl=600)
-def fetch_all_operating_expenses(_sb):
+def fetch_all_operating_expenses(_sb, user_key):
     try: return _sb.table("fund_operating_expenses").select("*").order("expense_date", desc=True).execute().data or []
     except: return []
 
 def get_operating_expenses():
-    return fetch_all_operating_expenses(get_supabase())
+    return fetch_all_operating_expenses(get_supabase(), current_cache_user_key())
 
 def check_and_show_alerts():
     if "dismissed_banners" not in st.session_state:
@@ -696,7 +699,9 @@ def show_login():
                 sb = get_supabase()
                 res = sb.auth.sign_in_with_password({"email": email, "password": password})
                 st.session_state.logged_in = True
+                st.session_state.user_email = email
                 st.session_state.username = email.split("@")[0]
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error(f"Login Error: {str(e)}")
@@ -766,6 +771,7 @@ def main():
                 get_supabase().auth.sign_out()
             except:
                 pass
+            st.cache_data.clear()
             st.session_state.clear()
             st.rerun()
 
