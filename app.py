@@ -192,29 +192,247 @@ def calculate_fund_metrics(fund, calls, dists):
         "equalisation_interest": total_equalisation_interest
     }
 
+CAPITAL_CALL_COMPONENT_TYPES = [
+    "Gross capital call",
+    "Recallable repayment",
+    "Non-recallable distribution",
+    "Realised gain distribution",
+    "Equalisation interest outside commitment"
+]
+BUNDLE_COMPONENT_ROW_LIMIT = 15
+
+def normalize_amount(value) -> float:
+    if value is None:
+        return 0.0
+    try:
+        text = str(value).replace(",", "").replace("$", "").replace("€", "").strip()
+        if text.startswith("(") and text.endswith(")"):
+            text = text[1:-1]
+        return abs(float(text))
+    except Exception:
+        return 0.0
+
+def parse_ai_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value).split("T")[0], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+def normalize_ai_notice_type(value: str) -> str:
+    notice_type = str(value or "simple_capital_call").strip().lower().replace("-", "_").replace(" ", "_")
+    if notice_type in ["net_capital_call", "equalisation_bundle", "net_capital_call_equalisation_bundle"]:
+        return "net_capital_call_bundle"
+    if notice_type not in ["simple_capital_call", "distribution", "net_capital_call_bundle"]:
+        return "simple_capital_call"
+    return notice_type
+
+def normalize_ai_component_type(value: str) -> str:
+    component_type = str(value or "").strip()
+    if component_type in CAPITAL_CALL_COMPONENT_TYPES:
+        return component_type
+    lookup = {
+        "gross call": "Gross capital call",
+        "capital call": "Gross capital call",
+        "gross capital call": "Gross capital call",
+        "recallable repayment": "Recallable repayment",
+        "recallable distribution": "Recallable repayment",
+        "non-recallable distribution": "Non-recallable distribution",
+        "non recallable distribution": "Non-recallable distribution",
+        "realised gain distribution": "Realised gain distribution",
+        "realized gain distribution": "Realised gain distribution",
+        "equalisation interest": "Equalisation interest outside commitment",
+        "equalization interest": "Equalisation interest outside commitment",
+        "equalisation interest outside commitment": "Equalisation interest outside commitment",
+        "equalization interest outside commitment": "Equalisation interest outside commitment"
+    }
+    return lookup.get(component_type.lower(), "Gross capital call")
+
+def ai_result_mentions_retained_amount(ai_result: dict) -> bool:
+    retained_terms = ["retained", "retain", "withheld", "offset", "netted"]
+    text_parts = [str(w) for w in ai_result.get("warnings", []) if w]
+    reconciliation = ai_result.get("reconciliation", {})
+    if isinstance(reconciliation, dict):
+        text_parts.extend(str(value) for value in reconciliation.values() if value)
+    components = ai_result.get("components", [])
+    if isinstance(components, list):
+        for component in components:
+            if isinstance(component, dict):
+                text_parts.append(str(component.get("description") or ""))
+                text_parts.append(str(component.get("component_type") or ""))
+    combined_text = " ".join(text_parts).lower()
+    return any(term in combined_text for term in retained_terms)
+
+def ai_result_maps_retained_amount(ai_result: dict) -> bool:
+    components = ai_result.get("components", [])
+    if not isinstance(components, list):
+        return False
+    for component in components:
+        if isinstance(component, dict) and "retain" in str(component.get("description") or "").lower():
+            return True
+    return False
+
+def apply_capital_call_ai_prefill(fund, calls, ai_result: dict) -> list[str]:
+    fund_id = fund["id"]
+    warnings = [str(w) for w in ai_result.get("warnings", []) if str(w).strip()]
+    notice_type = normalize_ai_notice_type(ai_result.get("notice_type"))
+    call_number = int(normalize_amount(ai_result.get("call_number")) or (len(calls) + 1))
+    call_date = parse_ai_date(ai_result.get("call_date")) or date.today()
+    payment_date = parse_ai_date(ai_result.get("payment_date")) or date.today()
+
+    if notice_type == "net_capital_call_bundle":
+        st.session_state[f"call_entry_mode_{fund_id}"] = "Net Capital Call / Equalisation Bundle"
+        st.session_state[f"cc_ai_result_{fund_id}"] = {}
+        st.session_state[f"bundle_call_num_{fund_id}"] = call_number
+        st.session_state[f"bundle_call_date_{fund_id}"] = call_date
+        st.session_state[f"bundle_payment_date_{fund_id}"] = payment_date
+        st.session_state[f"bundle_expected_wire_{fund_id}"] = normalize_amount(ai_result.get("final_wire_amount"))
+        st.session_state[f"bundle_ai_expected_wire_set_{fund_id}"] = ai_result.get("final_wire_amount") is not None
+        fund_name = str(fund.get("name") or "").strip()
+        prefix = "Net Capital Call / Equalisation Bundle"
+        st.session_state[f"bundle_note_prefix_{fund_id}"] = f"{prefix} - {fund_name}" if fund_name else prefix
+
+        components = ai_result.get("components", [])
+        if not isinstance(components, list):
+            components = []
+        if len(components) > BUNDLE_COMPONENT_ROW_LIMIT:
+            warnings.append(f"AI extracted more than {BUNDLE_COMPONENT_ROW_LIMIT} components. The first {BUNDLE_COMPONENT_ROW_LIMIT} were prefilled; enter remaining components manually.")
+        if ai_result_mentions_retained_amount(ai_result) and not ai_result_maps_retained_amount(ai_result):
+            warnings.append("Retained or netted amounts were detected but not clearly mapped to a component. Review the net distribution amounts before saving.")
+
+        for row_idx in range(BUNDLE_COMPONENT_ROW_LIMIT):
+            component = components[row_idx] if row_idx < len(components) and isinstance(components[row_idx], dict) else None
+            component_type = normalize_ai_component_type(component.get("component_type")) if component else CAPITAL_CALL_COMPONENT_TYPES[0]
+            cash_amount = normalize_amount(component.get("cash_amount")) if component else 0.0
+            commitment_impact = normalize_amount(component.get("commitment_impact")) if component else 0.0
+            if component_type != "Gross capital call":
+                commitment_impact = 0.0
+            if component_type == "Equalisation interest outside commitment":
+                cash_amount = 0.0
+            st.session_state[f"bundle_enabled_{fund_id}_{row_idx}"] = component is not None
+            st.session_state[f"bundle_type_{fund_id}_{row_idx}"] = component_type
+            st.session_state[f"bundle_desc_{fund_id}_{row_idx}"] = str(component.get("description") or "").strip() if component else ""
+            st.session_state[f"bundle_cash_{fund_id}_{row_idx}"] = cash_amount
+            st.session_state[f"bundle_commit_{fund_id}_{row_idx}"] = commitment_impact
+            st.session_state[f"bundle_eq_{fund_id}_{row_idx}"] = normalize_amount(component.get("equalisation_interest")) if component else 0.0
+
+        return warnings
+
+    simple = ai_result.get("simple", {})
+    if not isinstance(simple, dict):
+        simple = {}
+    if not simple and any(key in ai_result for key in ["amount", "investments", "mgmt_fee", "fund_expenses"]):
+        simple = ai_result
+
+    transaction_type = str(simple.get("transaction_type") or "call").strip().lower()
+    if notice_type == "distribution":
+        transaction_type = "distribution"
+    elif transaction_type not in ["call", "repayment", "distribution"]:
+        transaction_type = "call"
+
+    final_wire_amount = normalize_amount(ai_result.get("final_wire_amount"))
+    amount = final_wire_amount if notice_type == "distribution" and final_wire_amount else normalize_amount(simple.get("amount"))
+    investments = 0.0 if notice_type == "distribution" else normalize_amount(simple.get("investments"))
+
+    st.session_state[f"call_entry_mode_{fund_id}"] = "Simple Capital Call"
+    st.session_state[f"bundle_ai_expected_wire_set_{fund_id}"] = False
+    st.session_state[f"cc_ai_result_{fund_id}"] = {
+        "call_number": call_number,
+        "call_date": str(call_date),
+        "payment_date": str(payment_date),
+        "amount": amount,
+        "investments": investments,
+        "mgmt_fee": normalize_amount(simple.get("mgmt_fee")),
+        "fund_expenses": normalize_amount(simple.get("fund_expenses")),
+        "equalisation_interest": normalize_amount(simple.get("equalisation_interest")),
+        "transaction_type": transaction_type,
+        "affects_called": bool(simple.get("affects_called", transaction_type == "repayment")),
+        "notes": str(simple.get("notes") or notice_type.replace("_", " ")).strip()
+    }
+    return warnings
+
 def analyze_capital_call_pdf_with_ai(pdf_bytes: bytes) -> dict:
     pdf_text = extract_pdf_text(pdf_bytes)
-    prompt = f"""You are an expert private equity fund accountant. Carefully analyze this Capital Call Notice and extract the financial details.
+    prompt = f"""You are an expert private equity fund accountant. Carefully analyze this capital call, distribution, or net capital call/equalisation notice.
 
-Return ONLY a valid JSON object with these exact keys (use 0 if a specific breakdown amount is not found, use null for missing dates):
+Classify the notice as exactly one of:
+1. simple_capital_call
+2. distribution
+3. net_capital_call_bundle
+
+Return ONLY a valid JSON object using this exact root schema. Use null for missing dates or unknown scalar values, [] for no rows, and 0 for missing amounts:
 {{
-    "call_date": "YYYY-MM-DD" (The date the notice was issued/written),
-    "payment_date": "YYYY-MM-DD" (The due date for the payment/wire),
-    "amount": total amount requested from the LP (number, e.g., 158889),
-    "investments": amount allocated specifically to investments or capital commitment (number, e.g., 157143),
-    "mgmt_fee": amount allocated to management fees (number),
-    "fund_expenses": amount allocated to fund expenses, reserves, GP deemed contributions, or ANY other additional fees combined (number, e.g., 1746)
+    "notice_type": "simple_capital_call | distribution | net_capital_call_bundle",
+    "confidence": number from 0 to 1,
+    "call_number": number or null,
+    "call_date": "YYYY-MM-DD" or null,
+    "payment_date": "YYYY-MM-DD" or null,
+    "currency": "USD | EUR | GBP | other" or null,
+    "final_wire_amount": number,
+    "wire_direction": "pay_to_fund | receive_from_fund | netted",
+    "simple": {{
+        "amount": number,
+        "investments": number,
+        "mgmt_fee": number,
+        "fund_expenses": number,
+        "equalisation_interest": number,
+        "transaction_type": "call | distribution | repayment",
+        "affects_called": boolean,
+        "notes": string
+    }},
+    "components": [
+        {{
+            "component_type": "Gross capital call | Recallable repayment | Non-recallable distribution | Realised gain distribution | Equalisation interest outside commitment",
+            "description": string,
+            "cash_amount": number,
+            "commitment_impact": number,
+            "equalisation_interest": number
+        }}
+    ],
+    "reconciliation": {{
+        "gross_calls": number,
+        "repayments": number,
+        "distributions": number,
+        "equalisation_interest": number,
+        "calculated_net_wire": number,
+        "difference_to_final_wire": number
+    }},
+    "warnings": [string]
 }}
 
-IMPORTANT: Return ONLY the JSON, no markdown, no extra text. Ensure amounts are numbers without commas.
+For net_capital_call_bundle components, use ONLY these exact component_type labels:
+- Gross capital call
+- Recallable repayment
+- Non-recallable distribution
+- Realised gain distribution
+- Equalisation interest outside commitment
 
-CAPITAL CALL TEXT:
+Bundle extraction rules:
+- Extract equalisation interest as its own "Equalisation interest outside commitment" component. Do not combine it into gross capital call, repayment, or distribution rows.
+- Set commitment_impact to 0 for every component except "Gross capital call".
+- For "Gross capital call", cash_amount is the cash called and commitment_impact is the amount that increases called capital.
+- For recallable repayments and distributions, use cash_amount only; component type determines that it subtracts from net wire.
+- Never invent adjustment rows merely to reconcile to final_wire_amount.
+- Only extract retained, withheld, offset, or netted components if they are explicitly stated in the notice.
+- If a retained/withheld/netted amount is explicitly linked to a gross distribution or realised gain distribution, use the cash-effective net amount in that component cash_amount.
+- Include the gross amount and retained/withheld/netted amount in that component description or in warnings.
+- If a distribution is partially retained, prefer cash-effective amounts only when the notice explicitly provides enough information to calculate them.
+- If the notice shows gross amounts and retained/netted/offset amounts but the cash-effective mapping is ambiguous, do not force reconciliation.
+- If retained, withheld, offset, or netted amounts are visible but cannot be mapped with confidence, add a warning containing the word "retained" that explains the user must review and adjust manually.
+- The component list should reconcile to final_wire_amount only when the notice explicitly provides enough information using: gross capital calls + equalisation interest - recallable repayments - distributions.
+- Put explicitly stated reconciliation-critical rows and equalisation interest before lower-priority detail rows so they appear in the first 15 components.
+
+Amounts must be positive numbers without commas. Component type determines whether the amount adds to or subtracts from the net wire.
+IMPORTANT: Return ONLY the JSON, no markdown, no extra text.
+
+NOTICE TEXT:
 {pdf_text}"""
 
     payload = {
         "model": "anthropic/claude-sonnet-4",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1000
+        "max_tokens": 2000
     }
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -1559,8 +1777,11 @@ def show_fund_detail(fund):
                     try:
                         cc_bytes = uploaded_cc_pdf.read()
                         ai_result = analyze_capital_call_pdf_with_ai(cc_bytes)
-                        st.session_state[f"cc_ai_result_{fund['id']}"] = ai_result
+                        prefill_warnings = apply_capital_call_ai_prefill(fund, calls, ai_result)
+                        st.session_state[f"cc_ai_prefill_warnings_{fund['id']}"] = prefill_warnings
                         st.success("✅ Data extracted successfully! Please review and confirm in the form below.")
+                        for warning in prefill_warnings:
+                            st.warning(warning)
                     except Exception as e:
                         st.error(f"Error analyzing document: {e}")
         
@@ -1574,29 +1795,31 @@ def show_fund_detail(fund):
             key=f"call_entry_mode_{fund['id']}"
         )
 
+        for warning in st.session_state.get(f"cc_ai_prefill_warnings_{fund['id']}", []):
+            st.warning(warning)
+
         if entry_mode == "Simple Capital Call":
             ai_data = st.session_state.get(f"cc_ai_result_{fund['id']}", {})
         
-            def_call_date = date.today()
-            if ai_data.get("call_date"):
-                try: def_call_date = datetime.strptime(ai_data["call_date"], "%Y-%m-%d").date()
-                except: pass
-                
-            def_pay_date = date.today()
-            if ai_data.get("payment_date"):
-                try: def_pay_date = datetime.strptime(ai_data["payment_date"], "%Y-%m-%d").date()
-                except: pass
+            def_call_date = parse_ai_date(ai_data.get("call_date")) or date.today()
+            def_pay_date = parse_ai_date(ai_data.get("payment_date")) or date.today()
+            def_call_num = int(normalize_amount(ai_data.get("call_number")) or (len(calls) + 1))
+            tx_options = ["call", "repayment", "distribution"]
+            def_tx_type = str(ai_data.get("transaction_type") or "call").strip().lower()
+            if def_tx_type not in tx_options:
+                def_tx_type = "call"
 
             with st.form(f"add_call_{fund['id']}"):
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    call_num = st.number_input("Call Number", min_value=1, value=len(calls)+1)
+                    call_num = st.number_input("Call Number", min_value=1, value=def_call_num)
                     call_date = st.date_input("Call Date", value=def_call_date)
                     payment_date = st.date_input("Payment Date", value=def_pay_date)
                 
                     tx_type = st.selectbox(
                         "Transaction Type",
-                        ["call", "repayment", "distribution"],
+                        tx_options,
+                        index=tx_options.index(def_tx_type),
                         format_func=lambda x: {
                             "call": "💰 Capital Call",
                             "repayment": "🔄 Capital Repayment (Recallable)",
@@ -1605,14 +1828,14 @@ def show_fund_detail(fund):
                     )
                 
                 with col2:
-                    amount = st.number_input("Cash Amount (Net Call)", min_value=0.0, value=float(ai_data.get("amount", 0)))
-                    investments = st.number_input("Investments (Commitment Impact)", min_value=0.0, value=float(ai_data.get("investments", 0)))
-                    mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=float(ai_data.get("mgmt_fee", 0)))
+                    amount = st.number_input("Cash Amount (Net Call)", min_value=0.0, value=normalize_amount(ai_data.get("amount")))
+                    investments = st.number_input("Investments (Commitment Impact)", min_value=0.0, value=normalize_amount(ai_data.get("investments")))
+                    mgmt_fee = st.number_input("Mgmt Fee", min_value=0.0, value=normalize_amount(ai_data.get("mgmt_fee")))
                 
                 with col3:
-                    fund_expenses = st.number_input("Fund Expenses & Other", min_value=0.0, value=float(ai_data.get("fund_expenses", 0)))
+                    fund_expenses = st.number_input("Fund Expenses & Other", min_value=0.0, value=normalize_amount(ai_data.get("fund_expenses")))
                 
-                    default_recall = (tx_type == "repayment")
+                    default_recall = bool(ai_data.get("affects_called", tx_type == "repayment"))
                     is_recallable = st.checkbox(
                         "Reduces Total Called", 
                         value=default_recall,
@@ -1622,12 +1845,12 @@ def show_fund_detail(fund):
                     equalisation_interest = st.number_input(
                         "Equalisation Interest", 
                         min_value=0.0, 
-                        value=0.0,
+                        value=normalize_amount(ai_data.get("equalisation_interest")),
                         help="Interest paid by late entrants - does NOT count toward Total Called"
                     )
                 
                     is_future = st.checkbox("Future Call (Show Alert)")
-                    notes = st.text_input("Notes")
+                    notes = st.text_input("Notes", value=str(ai_data.get("notes") or ""))
                 
                 if st.form_submit_button("Save Call to System", type="primary"):
                     try:
@@ -1697,13 +1920,7 @@ def show_fund_detail(fund):
                     key=f"bundle_expected_wire_{fund['id']}"
                 )
 
-            component_types = [
-                "Gross capital call",
-                "Recallable repayment",
-                "Non-recallable distribution",
-                "Realised gain distribution",
-                "Equalisation interest outside commitment"
-            ]
+            component_types = CAPITAL_CALL_COMPONENT_TYPES
 
             component_rows = []
             st.markdown("**Components**")
@@ -1714,7 +1931,7 @@ def show_fund_detail(fund):
             h_cash.markdown("Cash Amount")
             h_commit.markdown("Commitment Impact")
             h_eq.markdown("Equalisation Interest")
-            for row_idx in range(10):
+            for row_idx in range(BUNDLE_COMPONENT_ROW_LIMIT):
                 c_enabled, c_type, c_desc, c_cash, c_commit, c_eq = st.columns([0.7, 2.2, 2.6, 1.4, 1.4, 1.4])
                 with c_enabled:
                     enabled = st.checkbox("Use", key=f"bundle_enabled_{fund['id']}_{row_idx}")
@@ -1870,7 +2087,8 @@ def show_fund_detail(fund):
                 st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
 
             st.metric("Calculated Net Wire Amount", format_currency(net_wire, currency_sym))
-            if expected_wire != 0 and abs(net_wire - expected_wire) > 0.01:
+            expected_wire_supplied = expected_wire != 0 or st.session_state.get(f"bundle_ai_expected_wire_set_{fund['id']}", False)
+            if expected_wire_supplied and abs(net_wire - expected_wire) > 0.01:
                 st.warning(
                     f"Expected wire differs by {format_currency(abs(net_wire - expected_wire), currency_sym)}. "
                     "Review the components before saving."
