@@ -1632,11 +1632,22 @@ def show_portfolio():
     if not funds:
         st.info("No funds in the system")
         return
-    
-    tabs = st.tabs([f["name"] for f in funds])
-    for i, fund in enumerate(funds):
-        with tabs[i]:
-            show_fund_detail(fund)
+
+    selected_fund_id = st.session_state.get("portfolio_selected_fund_id")
+    if selected_fund_id not in [f["id"] for f in funds]:
+        selected_fund_id = funds[0]["id"]
+        st.session_state.portfolio_selected_fund_id = selected_fund_id
+
+    selected_index = next((idx for idx, f in enumerate(funds) if f["id"] == selected_fund_id), 0)
+    selected_fund = st.selectbox(
+        "Select Fund",
+        funds,
+        index=selected_index,
+        format_func=lambda f: f["name"],
+        key="portfolio_selected_fund"
+    )
+    st.session_state.portfolio_selected_fund_id = selected_fund["id"]
+    show_fund_detail(selected_fund)
 
 def show_fund_detail(fund):
     calls = get_capital_calls(fund["id"])
