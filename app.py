@@ -693,9 +693,418 @@ def convert_df_to_excel(df: pd.DataFrame) -> bytes:
 def generate_master_excel_bytes() -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        from openpyxl.styles import Font
+        from openpyxl.utils import get_column_letter
+
+        def safe_sheet_name(name: str, used_names: set) -> str:
+            invalid_chars = '[]:*?/\\'
+            clean = "".join("_" if ch in invalid_chars else ch for ch in str(name or "Sheet")).strip()
+            clean = clean[:31] or "Sheet"
+            base = clean
+            idx = 1
+            while clean in used_names:
+                suffix = f"_{idx}"
+                clean = f"{base[:31-len(suffix)]}{suffix}"
+                idx += 1
+            used_names.add(clean)
+            return clean
+
+        def parse_date(value):
+            if not value:
+                return None
+            try:
+                return datetime.strptime(str(value).split("T")[0], "%Y-%m-%d").date()
+            except Exception:
+                return None
+
+        def commitment_value(fund):
+            value = float(fund.get("commitment") or 0)
+            if 0 < value <= 1000:
+                value *= 1_000_000
+            return value
+
+        def auto_format_sheet(sheet_name, currency_cols=None, percent_cols=None, multiple_cols=None, date_cols=None):
+            ws = writer.book[sheet_name]
+            ws.freeze_panes = "A2"
+            for cell in ws[1]:
+                cell.font = Font(bold=True)
+            currency_cols = set(currency_cols or [])
+            percent_cols = set(percent_cols or [])
+            multiple_cols = set(multiple_cols or [])
+            date_cols = set(date_cols or [])
+            headers = [cell.value for cell in ws[1]]
+            for col_idx, header in enumerate(headers, start=1):
+                letter = get_column_letter(col_idx)
+                max_len = len(str(header or ""))
+                for cell in ws[letter]:
+                    if cell.value is not None:
+                        max_len = max(max_len, len(str(cell.value)))
+                    if cell.row > 1:
+                        if header in currency_cols:
+                            cell.number_format = '#,##0.0'
+                        elif header in percent_cols:
+                            cell.number_format = '0.0%'
+                        elif header in multiple_cols:
+                            cell.number_format = '0.00x'
+                        elif header in date_cols:
+                            cell.number_format = 'yyyy-mm-dd'
+                ws.column_dimensions[letter].width = min(max_len + 2, 42)
+
+        def write_section(ws, start_row, title, headers, rows, currency_headers=None, percent_headers=None, multiple_headers=None, date_headers=None):
+            ws.cell(start_row, 1, title).font = Font(bold=True)
+            header_row = start_row + 1
+            for col_idx, header in enumerate(headers, start=1):
+                ws.cell(header_row, col_idx, header).font = Font(bold=True)
+            for row_idx, row in enumerate(rows, start=header_row + 1):
+                for col_idx, header in enumerate(headers, start=1):
+                    cell = ws.cell(row_idx, col_idx, row.get(header))
+                    if header in (currency_headers or []):
+                        cell.number_format = '#,##0.0'
+                    elif header in (percent_headers or []):
+                        cell.number_format = '0.0%'
+                    elif header in (multiple_headers or []):
+                        cell.number_format = '0.00x'
+                    elif header in (date_headers or []):
+                        cell.number_format = 'yyyy-mm-dd'
+            for col_idx, header in enumerate(headers, start=1):
+                letter = get_column_letter(col_idx)
+                max_len = len(str(header or ""))
+                for row_idx in range(start_row, start_row + len(rows) + 2):
+                    value = ws.cell(row_idx, col_idx).value
+                    if value is not None:
+                        max_len = max(max_len, len(str(value)))
+                ws.column_dimensions[letter].width = min(max_len + 2, 42)
+            return start_row + len(rows) + 4
+
+        def calculate_cash_paid(calls, dists):
+            cash_paid = 0.0
+            for c in calls:
+                if c.get("is_future"):
+                    continue
+                tx_type = c.get("transaction_type", "call")
+                amount = float(c.get("amount") or 0)
+                eq_interest = float(c.get("equalisation_interest") or 0)
+                if tx_type == "call":
+                    cash_paid += amount + eq_interest
+                elif tx_type in ["repayment", "distribution"]:
+                    cash_paid -= amount
+            cash_paid -= sum(float(d.get("amount") or 0) for d in dists)
+            return cash_paid
+
+        def calculate_overview_export(funds, all_calls, all_dists, all_reports):
+            latest_reports = {}
+            for r in all_reports:
+                fid = r["fund_id"]
+                if fid not in latest_reports:
+                    latest_reports[fid] = r
+                else:
+                    curr = latest_reports[fid]
+                    if r["year"] > curr["year"] or (r["year"] == curr["year"] and r["quarter"] > curr["quarter"]):
+                        latest_reports[fid] = r
+
+            total_commit_usd = 0.0
+            total_called_basis_usd = 0.0
+            total_uncalled_usd = 0.0
+            total_paid_in_cash_usd = 0.0
+            total_dist_cash_usd = 0.0
+            total_nav_usd = 0.0
+            portfolio_cash_flows = []
+            fund_navs = {}
+
+            for f in funds:
+                rate = st.session_state.eur_usd_rate if f.get("currency") == "EUR" else 1.0
+                c_val = commitment_value(f)
+                total_commit_usd += c_val * rate
+                f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
+                f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
+                metrics = calculate_fund_metrics(f, f_calls, f_dists)
+                called = metrics["total_called"]
+                total_called_basis_usd += called * rate
+                total_uncalled_usd += metrics["uncalled"] * rate
+                fund_paid_in = 0.0
+                fund_dist = 0.0
+
+                for c in f_calls:
+                    if c.get("is_future"):
+                        continue
+                    p_date = parse_date(c.get("payment_date") or c.get("call_date"))
+                    if not p_date:
+                        continue
+                    tx_type = c.get("transaction_type", "call")
+                    amt = float(c.get("amount") or 0) * rate
+                    eq = float(c.get("equalisation_interest") or 0) * rate
+                    if tx_type == "call":
+                        flow = amt + eq
+                        fund_paid_in += flow
+                        portfolio_cash_flows.append((p_date, -flow))
+                    elif tx_type == "repayment":
+                        fund_paid_in -= amt
+                        portfolio_cash_flows.append((p_date, amt))
+                    elif tx_type == "distribution":
+                        fund_dist += amt
+                        fund_paid_in -= amt
+                        portfolio_cash_flows.append((p_date, amt))
+
+                for d in f_dists:
+                    d_date = parse_date(d.get("dist_date"))
+                    if not d_date:
+                        continue
+                    amt = float(d.get("amount") or 0) * rate
+                    fund_dist += amt
+                    portfolio_cash_flows.append((d_date, amt))
+
+                total_paid_in_cash_usd += fund_paid_in
+                total_dist_cash_usd += fund_dist
+
+                fund_nav_local = 0.0
+                if f["id"] in latest_reports:
+                    rep = latest_reports[f["id"]]
+                    rvpi = float(rep.get('rvpi') or 0.0)
+                    tvpi = float(rep.get('tvpi') or 1.0)
+                    rep_nav = rep.get("nav")
+                    rep_date = parse_date(rep.get("report_date"))
+                    try:
+                        if rep_nav is None or rep_nav == "" or not rep_date:
+                            raise ValueError("Missing report NAV or date")
+                        fund_nav_local = float(rep_nav)
+                        for c in f_calls:
+                            if c.get("is_future"):
+                                continue
+                            c_date = parse_date(c.get("payment_date") or c.get("call_date"))
+                            if not c_date or c_date <= rep_date:
+                                continue
+                            tx_type = c.get("transaction_type", "call")
+                            if tx_type == "call":
+                                amount = c.get("investments") if c.get("investments") is not None else c.get("amount")
+                                fund_nav_local += float(amount or 0)
+                            elif tx_type == "distribution":
+                                fund_nav_local -= float(c.get("amount") or 0)
+                        for d in f_dists:
+                            d_date = parse_date(d.get("dist_date"))
+                            if d_date and d_date > rep_date:
+                                fund_nav_local -= float(d.get("amount") or 0)
+                    except Exception:
+                        if rvpi > 0:
+                            fund_nav_local = called * rvpi
+                        else:
+                            fund_nav_local = (called * tvpi) - metrics["total_distributed"]
+                else:
+                    fund_nav_local = called
+
+                fund_navs[f["id"]] = fund_nav_local
+                total_nav_usd += fund_nav_local * rate
+
+            total_operating_expenses_cash_usd = 0.0
+            for exp in get_operating_expenses():
+                exp_date = parse_date(exp.get("expense_date"))
+                if not exp_date:
+                    continue
+                rate = st.session_state.eur_usd_rate if exp.get("currency") == "EUR" else 1.0
+                amt = float(exp.get("amount", 0)) * rate
+                portfolio_cash_flows.append((exp_date, -amt))
+                total_operating_expenses_cash_usd += amt
+            total_paid_in_cash_usd += total_operating_expenses_cash_usd
+
+            portfolio_cash_flows.append((date.today(), total_nav_usd))
+            portfolio_irr = calculate_xirr(portfolio_cash_flows)
+            portfolio_tvpi = (total_dist_cash_usd + total_nav_usd) / total_called_basis_usd if total_called_basis_usd > 0 else 0
+            irr_display = "—"
+            if isinstance(portfolio_irr, float):
+                irr_display = f"{portfolio_irr * 100:.1f}%"
+            elif portfolio_irr == "NM":
+                irr_display = "NM (<1 Year)"
+
+            return {
+                "latest_reports": latest_reports,
+                "fund_navs": fund_navs,
+                "metrics": {
+                    "Active Funds": len(funds),
+                    "Total Commitments (USD Eqv)": total_commit_usd,
+                    "Total Called (Basis)": total_called_basis_usd,
+                    "Uncalled Balance": total_uncalled_usd,
+                    "Total Paid-In (Cash Out)": total_paid_in_cash_usd,
+                    "Octo True NAV (USD Eqv)": total_nav_usd,
+                    "Portfolio TVPI": portfolio_tvpi,
+                    "Portfolio Net IRR": irr_display
+                }
+            }
+
         funds = get_funds()
         all_calls = get_capital_calls()
         all_dists = get_distributions()
+        all_reports = get_quarterly_reports(None)
+        operating_expenses = get_operating_expenses()
+        active_funds = [f for f in funds if str(f.get("status", "active")).lower() == "active"]
+        used_sheet_names = set()
+        overview = calculate_overview_export(funds, all_calls, all_dists, all_reports)
+        overview_sheet = safe_sheet_name("Overview", used_sheet_names)
+        overview_rows = [{"Metric": k, "Value": v} for k, v in overview["metrics"].items()]
+        pd.DataFrame(overview_rows).to_excel(writer, index=False, sheet_name=overview_sheet, startrow=0)
+        ws = writer.book[overview_sheet]
+        ws["B2"].number_format = '0'
+        for row in range(3, 7):
+            ws.cell(row, 2).number_format = '"$"#,##0.0'
+        ws["B7"].number_format = '"$"#,##0.0'
+        ws["B8"].number_format = '0.00x'
+        ws.freeze_panes = "A2"
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        used_sheet_names.update({"Funds Portfolio", "Investors & Calls", "Pipeline"})
+
+        status_rows = []
+        for f in funds:
+            f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
+            f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
+            f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+            total_called = f_metrics["total_called"]
+            c_val = commitment_value(f)
+            status_rows.append({
+                "Fund": f["name"],
+                "Currency": f.get("currency", "USD"),
+                "Commitment": c_val,
+                "Total Called": total_called,
+                "Cash Paid": calculate_cash_paid(f_calls, f_dists),
+                "Called %": total_called / c_val if c_val > 0 else None,
+                "Octo NAV": overview["fund_navs"].get(f["id"], total_called),
+                "Status": f.get("status", "active").capitalize()
+            })
+        next_row = write_section(
+            ws,
+            len(overview_rows) + 4,
+            "Funds Status",
+            ["Fund", "Currency", "Commitment", "Total Called", "Cash Paid", "Called %", "Octo NAV", "Status"],
+            status_rows,
+            currency_headers=["Commitment", "Total Called", "Cash Paid", "Octo NAV"],
+            percent_headers=["Called %"]
+        )
+
+        today = date.today()
+        upcoming_rows = []
+        funds_dict = {f["id"]: f for f in funds}
+        upcoming_events = {}
+        for c in all_calls:
+            p_date = parse_date(c.get("payment_date"))
+            if not p_date or p_date < today:
+                continue
+            key = (c.get("fund_id"), p_date)
+            if key not in upcoming_events:
+                upcoming_events[key] = {
+                    "fund": funds_dict.get(c.get("fund_id"), {}).get("name", "Unknown Fund"),
+                    "currency": funds_dict.get(c.get("fund_id"), {}).get("currency", "USD"),
+                    "amount": 0.0
+                }
+            tx_type = c.get("transaction_type", "call")
+            amt = float(c.get("amount") or 0)
+            interest = float(c.get("equalisation_interest") or 0)
+            if tx_type == "call":
+                upcoming_events[key]["amount"] += amt + interest
+            elif tx_type in ["repayment", "distribution"]:
+                upcoming_events[key]["amount"] -= amt
+        for (_, p_date), event in sorted(upcoming_events.items(), key=lambda item: item[0][1]):
+            upcoming_rows.append({
+                "Fund": event["fund"],
+                "Event type": "Capital Call",
+                "Payment date": p_date,
+                "Amount": event["amount"]
+            })
+        if upcoming_rows:
+            write_section(
+                ws,
+                next_row,
+                "Upcoming Events",
+                ["Fund", "Event type", "Payment date", "Amount"],
+                upcoming_rows,
+                currency_headers=["Amount"],
+                date_headers=["Payment date"]
+            )
+        auto_format_sheet(overview_sheet)
+
+        for f in active_funds:
+            sheet_name = safe_sheet_name(f.get("name"), used_sheet_names)
+            ws = writer.book.create_sheet(sheet_name)
+            writer.sheets[sheet_name] = ws
+            f_calls = [c for c in all_calls if c["fund_id"] == f["id"]]
+            f_dists = [d for d in all_dists if d["fund_id"] == f["id"]]
+            f_reports = [r for r in all_reports if r["fund_id"] == f["id"]]
+            f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
+            c_val = f_metrics["commitment"]
+            total_called = f_metrics["total_called"]
+            posted_calls = [c for c in f_calls if not c.get("is_future")]
+            total_mgmt = sum(float(c.get("mgmt_fee") or 0) for c in posted_calls)
+            total_exp = sum(float(c.get("fund_expenses") or 0) for c in posted_calls)
+            total_eq = sum(float(c.get("equalisation_interest") or 0) for c in posted_calls)
+            fund_metric_rows = [
+                {"Metric": "Commitment", "Value": c_val},
+                {"Metric": "Total Called / Basis", "Value": total_called},
+                {"Metric": "Called %", "Value": total_called / c_val if c_val > 0 else None},
+                {"Metric": "Actual Cash Paid", "Value": calculate_cash_paid(f_calls, f_dists)},
+                {"Metric": "Uncalled Balance", "Value": f_metrics["uncalled"]},
+                {"Metric": "Total Distributed", "Value": f_metrics["total_distributed"]},
+                {"Metric": "Management Fees", "Value": total_mgmt},
+                {"Metric": "Fund Expenses & Other", "Value": total_exp},
+                {"Metric": "Equalisation / Late Interest", "Value": total_eq},
+                {"Metric": "Octo NAV", "Value": overview["fund_navs"].get(f["id"], total_called)}
+            ]
+            row = write_section(ws, 1, "Fund Metrics", ["Metric", "Value"], fund_metric_rows)
+            for excel_row in range(4, 13):
+                ws.cell(excel_row, 2).number_format = '0.0%' if ws.cell(excel_row, 1).value == "Called %" else '#,##0.0'
+
+            call_rows = []
+            for c in f_calls:
+                affects = c.get("affects_called")
+                tx_type = c.get("transaction_type", "call")
+                call_rows.append({
+                    "Call Number": c.get("call_number"),
+                    "Call Date": parse_date(c.get("call_date")),
+                    "Payment Date": parse_date(c.get("payment_date")),
+                    "Transaction Type": tx_type,
+                    "Amount / Cash Amount": float(c.get("amount") or 0),
+                    "Investments / Commitment Impact": float(c.get("investments") or 0),
+                    "Mgmt Fee": float(c.get("mgmt_fee") or 0),
+                    "Fund Expenses & Other": float(c.get("fund_expenses") or 0),
+                    "Equalisation Interest": float(c.get("equalisation_interest") or 0),
+                    "Status": "Future" if c.get("is_future") else "Posted",
+                    "Called Basis Treatment": "Reduces called capital" if bool(affects or (affects is None and tx_type == "repayment")) else "",
+                    "Notes": c.get("notes")
+                })
+            row = write_section(
+                ws,
+                row,
+                "Capital Calls",
+                ["Call Number", "Call Date", "Payment Date", "Transaction Type", "Amount / Cash Amount", "Investments / Commitment Impact", "Mgmt Fee", "Fund Expenses & Other", "Equalisation Interest", "Status", "Called Basis Treatment", "Notes"],
+                call_rows,
+                currency_headers=["Amount / Cash Amount", "Investments / Commitment Impact", "Mgmt Fee", "Fund Expenses & Other", "Equalisation Interest"],
+                date_headers=["Call Date", "Payment Date"]
+            )
+
+            dist_rows = [{
+                "Date": parse_date(d.get("dist_date")),
+                "Amount": float(d.get("amount") or 0),
+                "Notes / Type": d.get("notes") or d.get("dist_type")
+            } for d in f_dists]
+            row = write_section(ws, row, "Distributions", ["Date", "Amount", "Notes / Type"], dist_rows, currency_headers=["Amount"], date_headers=["Date"])
+
+            perf_rows = [{
+                "Year": r.get("year"),
+                "Quarter": r.get("quarter"),
+                "Report Date": parse_date(r.get("report_date")),
+                "NAV": float(r.get("nav") or 0),
+                "TVPI": float(r.get("tvpi") or 0),
+                "DPI": float(r.get("dpi") or 0),
+                "RVPI": float(r.get("rvpi") or 0),
+                "IRR": float(r.get("irr") or 0) / 100 if r.get("irr") is not None else None,
+                "Notes": r.get("notes")
+            } for r in f_reports]
+            row = write_section(ws, row, "Quarterly Reports / Performance", ["Year", "Quarter", "Report Date", "NAV", "TVPI", "DPI", "RVPI", "IRR", "Notes"], perf_rows, currency_headers=["NAV"], multiple_headers=["TVPI", "DPI", "RVPI"], percent_headers=["IRR"], date_headers=["Report Date"])
+
+            fund_expenses = [exp for exp in operating_expenses if exp.get("fund_id") == f["id"]]
+            expense_rows = [{
+                "Date": parse_date(exp.get("expense_date")),
+                "Amount": float(exp.get("amount") or 0),
+                "Category / Notes": " - ".join(part for part in [str(exp.get("category") or ""), str(exp.get("description") or "")] if part)
+            } for exp in fund_expenses]
+            write_section(ws, row, "Fund Expenses", ["Date", "Amount", "Category / Notes"], expense_rows, currency_headers=["Amount"], date_headers=["Date"])
+            ws.freeze_panes = "A2"
         
         if funds:
             funds_list = []
@@ -714,8 +1123,10 @@ def generate_master_excel_bytes() -> bytes:
                     "Status": f.get("status")
                 })
             pd.DataFrame(funds_list).to_excel(writer, index=False, sheet_name='Funds Portfolio')
+            auto_format_sheet('Funds Portfolio', currency_cols=["Commitment", "Total Called"])
         else:
             pd.DataFrame([{"Message": "No funds in the system"}]).to_excel(writer, index=False, sheet_name='Funds Portfolio')
+            auto_format_sheet('Funds Portfolio')
         
         investors = get_investors()
         lp_calls = get_lp_calls()
@@ -733,8 +1144,10 @@ def generate_master_excel_bytes() -> bytes:
                     row[col_name] = "Paid" if (payment and payment["is_paid"]) else "Unpaid"
                 data.append(row)
             pd.DataFrame(data).to_excel(writer, index=False, sheet_name='Investors & Calls')
+            auto_format_sheet('Investors & Calls', currency_cols=["Commitment"])
         else:
             pd.DataFrame([{"Message": "No investors defined"}]).to_excel(writer, index=False, sheet_name='Investors & Calls')
+            auto_format_sheet('Investors & Calls')
             
         pipeline = get_pipeline_funds()
         if pipeline:
@@ -750,8 +1163,10 @@ def generate_master_excel_bytes() -> bytes:
                     "Priority": p.get("priority")
                 })
             pd.DataFrame(pipe_list).to_excel(writer, index=False, sheet_name='Pipeline')
+            auto_format_sheet('Pipeline', currency_cols=["Target Commitment"], date_cols=["Target Close Date"])
         else:
             pd.DataFrame([{"Message": "No pipeline funds"}]).to_excel(writer, index=False, sheet_name='Pipeline')
+            auto_format_sheet('Pipeline')
             
     return output.getvalue()
 
