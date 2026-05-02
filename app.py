@@ -1651,21 +1651,12 @@ def show_fund_detail(fund):
     uncalled = metrics["uncalled"]
     currency_sym = "€" if fund.get("currency") == "EUR" else "$"
 
-    col1, col2, col3, col4, col_edit, col_del = st.columns([2,2,2,2,1,1])
-    with col1:
-        st.metric("Commitment", format_currency(commitment, currency_sym))
-    with col2:
-        pct = f"{total_called/commitment*100:.1f}%" if commitment > 0 else "—"
-        st.metric("Total Called", format_currency(total_called, currency_sym), pct)
-    with col3:
-        st.metric("Uncalled Balance", format_currency(uncalled, currency_sym))
-    with col4:
-        st.metric("Total Distributed", format_currency(total_dist, currency_sym))
+    col_spacer, col_edit, col_del = st.columns([9.2,0.4,0.4])
     with col_edit:
-        if st.button("✏️ Edit", key=f"edit_fund_{fund['id']}"):
+        if st.button("✏️", key=f"edit_fund_{fund['id']}", help="Edit fund details"):
             st.session_state[f"editing_fund_{fund['id']}"] = True
     with col_del:
-        if st.button("🗑️ Delete", key=f"del_fund_{fund['id']}"):
+        if st.button("🗑️", key=f"del_fund_{fund['id']}", help="Delete fund"):
             st.session_state[f"confirm_del_fund_{fund['id']}"] = True
 
     if st.session_state.get(f"confirm_del_fund_{fund['id']}"):
@@ -1741,6 +1732,97 @@ def show_fund_detail(fund):
                 if st.form_submit_button("❌ Cancel"):
                     st.session_state.pop(f"editing_fund_{fund['id']}", None)
                     st.rerun()
+
+    posted_calls = [c for c in calls if not c.get("is_future")]
+    actual_cash_paid = 0.0
+    total_mgmt_fees = 0.0
+    total_fund_expenses = 0.0
+    total_equalisation_interest = 0.0
+
+    for c in posted_calls:
+        tx_type = c.get("transaction_type", "call")
+        amount = float(c.get("amount") or 0)
+        eq_interest = float(c.get("equalisation_interest") or 0)
+
+        total_mgmt_fees += float(c.get("mgmt_fee") or 0)
+        total_fund_expenses += float(c.get("fund_expenses") or 0)
+        total_equalisation_interest += eq_interest
+
+        if tx_type == "call":
+            actual_cash_paid += amount + eq_interest
+        elif tx_type in ["repayment", "distribution"]:
+            actual_cash_paid -= amount
+
+    actual_cash_paid -= sum(float(d.get("amount") or 0) for d in dists)
+
+    def fmt_fund_amount(value, dash_zero=False):
+        value = float(value or 0)
+        if dash_zero and abs(value) < 0.05:
+            return "&mdash;"
+        return f"{currency_sym}{value:,.1f}"
+
+    called_pct = f"{total_called / commitment * 100:.1f}%" if commitment > 0 else "&mdash;"
+    fund_metric_rows = [
+        ("Commitment", fmt_fund_amount(commitment)),
+        ("Total Called / Basis", fmt_fund_amount(total_called)),
+        ("Called %", called_pct),
+        ("Actual Cash Paid", fmt_fund_amount(actual_cash_paid)),
+        ("Uncalled Balance", fmt_fund_amount(uncalled)),
+        ("Total Distributed", fmt_fund_amount(total_dist, dash_zero=True)),
+        ("Management Fees", fmt_fund_amount(total_mgmt_fees, dash_zero=True)),
+        ("Fund Expenses & Other", fmt_fund_amount(total_fund_expenses, dash_zero=True)),
+        ("Equalisation / Late Interest", fmt_fund_amount(total_equalisation_interest, dash_zero=True))
+    ]
+    fund_metric_table_rows = "".join(
+        f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in fund_metric_rows
+    )
+    fund_metric_html = f"""
+<style>
+    .fund-metrics-wrap {{
+        max-width: 560px;
+        margin: -6px 0 6px 0;
+    }}
+    .fund-metrics-title {{
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: #f8fafc;
+        margin-bottom: 6px;
+    }}
+    .fund-metrics-table {{
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid #334155;
+        background: #111827;
+    }}
+    .fund-metrics-table td {{
+        padding: 6px 10px;
+        border-bottom: 1px solid #1f2937;
+        font-size: 0.86rem;
+        line-height: 1.25;
+    }}
+    .fund-metrics-table tr:last-child td {{
+        border-bottom: 0;
+    }}
+    .fund-metrics-table td:first-child {{
+        color: #94a3b8;
+        width: 58%;
+    }}
+    .fund-metrics-table td:last-child {{
+        color: #f8fafc;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+    }}
+</style>
+<div class="fund-metrics-wrap">
+    <div class="fund-metrics-title">Fund Metrics</div>
+    <table class="fund-metrics-table">
+        <tbody>{fund_metric_table_rows}</tbody>
+    </table>
+</div>
+"""
+
+    st.markdown(fund_metric_html, unsafe_allow_html=True)
 
     st.divider()
     tab1, tab2, tab3 = st.tabs(["📞 Capital Calls", "💰 Distributions", "📊 Performance"])
