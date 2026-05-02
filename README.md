@@ -29,10 +29,17 @@ git push origin main
 2. **New app** → חבר GitHub repo
 3. לך ל-**Advanced settings → Secrets** והוסף:
 ```toml
-SUPABASE_URL = "https://xxx.supabase.co"
-SUPABASE_KEY = "eyJ..."
+OPENROUTER_API_KEY = ""
+
+[supabase]
+url = "https://xxx.supabase.co"
+key = "your-supabase-anon-key"
 ```
-4. **Deploy!** ← הדשבורד חי
+4. Use the Supabase `anon key` unless there is an explicit server-side reason to use `service_role`.
+5. Never commit `.streamlit/secrets.toml`.
+6. Never commit a Supabase `service_role` key.
+7. Streamlit Cloud secrets must use the same TOML structure shown above.
+8. **Deploy!**
 
 ### שלב 4 – הזנת נתונים (10 דקות)
 - כנס לדשבורד
@@ -48,7 +55,7 @@ octo-dashboard/
 ├── app.py                    ← Main app (נגיעות ראשיות כאן)
 ├── requirements.txt          ← Dependencies
 ├── .streamlit/
-│   └── secrets.toml          ← Supabase credentials (לא לGitHub!)
+│   └── secrets.toml          - Local secrets only; never commit
 ├── sql/
 │   ├── octo_schema.sql       ← Database schema
 │   └── gantt_defaults.sql    ← Default tasks function
