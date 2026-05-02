@@ -334,6 +334,44 @@ def apply_capital_call_ai_prefill(fund, calls, ai_result: dict) -> list[str]:
     final_wire_amount = normalize_amount(ai_result.get("final_wire_amount"))
     amount = final_wire_amount if notice_type == "distribution" and final_wire_amount else normalize_amount(simple.get("amount"))
     investments = 0.0 if notice_type == "distribution" else normalize_amount(simple.get("investments"))
+    mgmt_fee = normalize_amount(simple.get("mgmt_fee"))
+    base_fund_expenses = normalize_amount(simple.get("fund_expenses"))
+    gp_deemed_contribution = normalize_amount(simple.get("gp_deemed_contribution"))
+    other_contributions = normalize_amount(simple.get("other_contributions"))
+    other_fees_or_expenses = normalize_amount(simple.get("other_fees_or_expenses"))
+    extra_expenses = gp_deemed_contribution + other_contributions + other_fees_or_expenses
+    fund_expenses = base_fund_expenses + extra_expenses
+    if transaction_type == "call" and extra_expenses > 0 and amount > 0:
+        implied_expenses = amount - investments - mgmt_fee
+        if abs(base_fund_expenses - implied_expenses) <= 1 and abs(fund_expenses - implied_expenses) > 1:
+            fund_expenses = base_fund_expenses
+
+    notes_parts = [str(simple.get("notes") or notice_type.replace("_", " ")).strip()]
+    if gp_deemed_contribution > 0:
+        notes_parts.append(f"Includes GP deemed contribution of {gp_deemed_contribution:g}.")
+    if other_contributions > 0:
+        notes_parts.append(f"Includes other contributions of {other_contributions:g}.")
+    if other_fees_or_expenses > 0:
+        notes_parts.append(f"Includes other fees or expenses of {other_fees_or_expenses:g}.")
+    notes = " ".join(part for part in notes_parts if part)
+
+    notes_text = str(simple.get("notes") or "")
+    is_recallable = bool(simple.get("is_recallable")) or "recallable" in notes_text.lower()
+    explicit_reduction = bool(simple.get("reduces_called_capital") or simple.get("restores_unfunded_commitment"))
+    if transaction_type == "call":
+        affects_called = False
+    elif transaction_type == "repayment":
+        affects_called = explicit_reduction or is_recallable
+    else:
+        affects_called = explicit_reduction or is_recallable
+
+    if transaction_type == "call" and amount > 0:
+        component_sum = investments + mgmt_fee + fund_expenses
+        if abs(amount - component_sum) > 1:
+            warnings.append(
+                f"Simple call components differ from cash amount by {abs(amount - component_sum):,.2f}. "
+                "Review amount, investments, fees, and expenses before saving."
+            )
 
     st.session_state[f"call_entry_mode_{fund_id}"] = "Simple Capital Call"
     st.session_state[f"bundle_ai_expected_wire_set_{fund_id}"] = False
@@ -343,12 +381,12 @@ def apply_capital_call_ai_prefill(fund, calls, ai_result: dict) -> list[str]:
         "payment_date": str(payment_date),
         "amount": amount,
         "investments": investments,
-        "mgmt_fee": normalize_amount(simple.get("mgmt_fee")),
-        "fund_expenses": normalize_amount(simple.get("fund_expenses")),
+        "mgmt_fee": mgmt_fee,
+        "fund_expenses": fund_expenses,
         "equalisation_interest": normalize_amount(simple.get("equalisation_interest")),
         "transaction_type": transaction_type,
-        "affects_called": bool(simple.get("affects_called", transaction_type == "repayment")),
-        "notes": str(simple.get("notes") or notice_type.replace("_", " ")).strip()
+        "affects_called": affects_called,
+        "notes": notes
     }
     return warnings
 
@@ -376,9 +414,15 @@ Return ONLY a valid JSON object using this exact root schema. Use null for missi
         "investments": number,
         "mgmt_fee": number,
         "fund_expenses": number,
+        "gp_deemed_contribution": number,
+        "other_contributions": number,
+        "other_fees_or_expenses": number,
         "equalisation_interest": number,
         "transaction_type": "call | distribution | repayment",
         "affects_called": boolean,
+        "is_recallable": boolean,
+        "reduces_called_capital": boolean,
+        "restores_unfunded_commitment": boolean,
         "notes": string
     }},
     "components": [
@@ -422,6 +466,21 @@ Bundle extraction rules:
 - If retained, withheld, offset, or netted amounts are visible but cannot be mapped with confidence, add a warning containing the word "retained" that explains the user must review and adjust manually.
 - The component list should reconcile to final_wire_amount only when the notice explicitly provides enough information using: gross capital calls + equalisation interest - recallable repayments - distributions.
 - Put explicitly stated reconciliation-critical rows and equalisation interest before lower-priority detail rows so they appear in the first 15 components.
+
+Simple capital call extraction rules:
+- For a normal capital call notice, set notice_type to "simple_capital_call", transaction_type to "call", affects_called to false, reduces_called_capital to false, and restores_unfunded_commitment to false.
+- A normal capital call increases called capital and reduces unfunded commitment; it does NOT reduce total called capital.
+- Only set affects_called true when the notice is a recallable repayment, clawback, or explicitly reduces called capital/restores unfunded commitment.
+- For repayment notices, set transaction_type to "repayment"; set is_recallable and affects_called true only if the repayment is recallable or explicitly restores unfunded commitment.
+- For distribution notices, set transaction_type to "distribution"; set affects_called false unless the notice explicitly says it is recallable or reduces called capital.
+- Map Capital Call for Investments, Investment Contribution, or Investment Capital Contribution to simple.investments.
+- Map Management Fees or Mgmt Fee to simple.mgmt_fee.
+- Map Fund Expenses, Partnership Expenses, Organizational Expenses, Other Expenses, or similar expense lines to simple.fund_expenses.
+- Extract GP Deemed Contribution, Deemed Contribution, GP Contribution, or similar lines to simple.gp_deemed_contribution, not simple.fund_expenses.
+- Extract Other Contribution or Other Capital Contribution lines to simple.other_contributions, not simple.fund_expenses.
+- Extract other fee/expense lines that do not fit management fee or fund expenses to simple.other_fees_or_expenses.
+- For simple capital calls, amount should be the total cash amount due. The components should reconcile as amount = investments + mgmt_fee + fund_expenses + gp_deemed_contribution + other_contributions + other_fees_or_expenses whenever the notice provides those details.
+- If a GP Deemed Contribution is present, mention it in simple.notes.
 
 Amounts must be positive numbers without commas. Component type determines whether the amount adds to or subtracts from the net wire.
 IMPORTANT: Return ONLY the JSON, no markdown, no extra text.
