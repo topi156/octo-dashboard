@@ -1281,23 +1281,52 @@ def show_overview():
     elif portfolio_irr == "NM":
         irr_display = "NM (<1 Year)"
 
+    def format_overview_currency(amount, currency_sym="$"):
+        return f"{currency_sym}{float(amount or 0):,.1f}"
+
+    st.markdown("""
+    <style>
+        [data-testid="stMetric"] label,
+        [data-testid="metric-container"] label,
+        [data-testid="metric-container"] div {
+            font-size: 0.72rem !important;
+            line-height: 1.15 !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+        }
+        [data-testid="stMetricValue"],
+        [data-testid="metric-container"] [data-testid="stMetricValue"] {
+            font-size: 0.95rem !important;
+            line-height: 1.15 !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+        }
+        [data-testid="metric-container"] {
+            padding: 8px 10px !important;
+            min-height: 0 !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown("##### 🏛️ Legal & Commitment (Basis)")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Active Funds", len(funds))
     with c2:
-        st.metric("Total Commitments (USD Eqv)", format_currency(total_commit_usd, "$"))
+        st.metric("Total Commitments (USD Eqv)", format_overview_currency(total_commit_usd, "$"))
     with c3:
-        st.metric("Total Called (Basis)", format_currency(total_called_basis_usd, "$"))
+        st.metric("Total Called (Basis)", format_overview_currency(total_called_basis_usd, "$"))
     with c4:
-        st.metric("Uncalled Balance", format_currency(total_uncalled_usd, "$"))
+        st.metric("Uncalled Balance", format_overview_currency(total_uncalled_usd, "$"))
 
     st.markdown("##### 🚀 Cash & Performance (Net LP)")
     c5, c6, c7, c8 = st.columns(4)
     with c5:
-        st.metric("Total Paid-In (Cash Out)", format_currency(total_paid_in_cash_usd, "$"))
+        st.metric("Total Paid-In (Cash Out)", format_overview_currency(total_paid_in_cash_usd, "$"))
     with c6:
-        st.metric("Octo True NAV (USD Eqv)", format_currency(total_nav_usd, "$"))
+        st.metric("Octo True NAV (USD Eqv)", format_overview_currency(total_nav_usd, "$"))
     with c7:
         st.metric("Portfolio TVPI", f"{portfolio_tvpi:.2f}x" if portfolio_tvpi > 0 else "—")
     with c8:
@@ -1316,6 +1345,16 @@ def show_overview():
                 f_dists = get_distributions(f["id"])
                 f_metrics = calculate_fund_metrics(f, f_calls, f_dists)
                 total_called = f_metrics["total_called"]
+                cash_paid = 0.0
+                for c in f_calls:
+                    tx_type = c.get("transaction_type", "call")
+                    amount = float(c.get("amount") or 0)
+                    eq_interest = float(c.get("equalisation_interest") or 0)
+                    if tx_type == "call":
+                        cash_paid += amount + eq_interest
+                    elif tx_type in ["repayment", "distribution"]:
+                        cash_paid -= amount
+                cash_paid -= sum(float(d.get("amount") or 0) for d in f_dists)
                 
                 c_val = float(f.get("commitment") or 0)
                 if 0 < c_val <= 1000:
@@ -1331,6 +1370,7 @@ def show_overview():
                     "Currency": f.get("currency", "USD"),
                     "Commitment": format_currency(c_val, currency_sym),
                     "Total Called": format_currency(total_called, currency_sym) if total_called > 0 else "—",
+                    "Cash Paid": format_currency(cash_paid, currency_sym) if abs(cash_paid) > 0 else "—",
                     "Called %": pct,
                     "Octo NAV": format_currency(octo_nav, currency_sym) if octo_nav > 0 else "—",
                     "Status": f.get("status", "active").capitalize(),
