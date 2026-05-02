@@ -16,6 +16,17 @@ from collections import defaultdict
 from supabase import create_client, Client
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
+HARDCODED_ALLOWED_EMAILS = set()
+
+def get_allowed_emails() -> set[str]:
+    allowed_emails = set(HARDCODED_ALLOWED_EMAILS)
+    auth_secrets = st.secrets.get("auth", {})
+    secret_emails = auth_secrets.get("allowed_emails", []) if auth_secrets else []
+    allowed_emails.update(str(email).strip().lower() for email in secret_emails if str(email).strip())
+    return allowed_emails
+
+def is_email_allowed(email: str) -> bool:
+    return email.strip().lower() in get_allowed_emails()
 
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
@@ -698,9 +709,18 @@ def show_login():
             try:
                 sb = get_supabase()
                 res = sb.auth.sign_in_with_password({"email": email, "password": password})
+                user_email = getattr(getattr(res, "user", None), "email", None) or email
+                user_email = user_email.strip().lower()
+                if not is_email_allowed(user_email):
+                    st.error("This user is not authorized to access this app.")
+                    try:
+                        sb.auth.sign_out()
+                    except Exception:
+                        pass
+                    return
                 st.session_state.logged_in = True
-                st.session_state.user_email = email
-                st.session_state.username = email.split("@")[0]
+                st.session_state.user_email = user_email
+                st.session_state.username = user_email.split("@")[0]
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:
