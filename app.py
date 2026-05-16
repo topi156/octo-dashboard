@@ -384,6 +384,8 @@ def apply_capital_call_ai_prefill(fund, calls, ai_result: dict) -> list[str]:
         "mgmt_fee": mgmt_fee,
         "fund_expenses": fund_expenses,
         "equalisation_interest": normalize_amount(simple.get("equalisation_interest")),
+        "investments_vs_expenses": str(simple.get("investments_vs_expenses") or ""),
+        "special_reallocations": str(simple.get("special_reallocations") or ""),
         "transaction_type": transaction_type,
         "affects_called": affects_called,
         "notes": notes
@@ -417,6 +419,8 @@ Return ONLY a valid JSON object using this exact root schema. Use null for missi
         "gp_deemed_contribution": number,
         "other_contributions": number,
         "other_fees_or_expenses": number,
+        "investments_vs_expenses": "detailed breakdown of investment vs expense components",
+        "special_reallocations": "any special reallocations or adjustments mentioned",
         "equalisation_interest": number,
         "transaction_type": "call | distribution | repayment",
         "affects_called": boolean,
@@ -517,11 +521,21 @@ Return ONLY a valid JSON object with these exact keys (use null if a specific me
     "year": number (e.g., 2025, derived from the report date),
     "quarter": number (1, 2, 3, or 4),
     "report_date": "YYYY-MM-DD",
-    "nav": number (The Fund's Total Value or Net Asset Value. Ensure it is the FULL absolute number, e.g., if it says 1,498.3m, return 1498300000 without commas),
-    "tvpi": number (Total Value to Paid-In, Gross MOIC, or Multiple, e.g., 1.70),
-    "dpi": number (Distributions to Paid-In. IF NOT EXPLICITLY STATED, calculate by dividing Total Distributions by Paid-In Capital),
-    "rvpi": number (Residual Value to Paid-In. IF NOT EXPLICITLY STATED, calculate by dividing Net Asset Value (NAV) by Paid-In Capital),
-    "irr": number (Internal Rate of Return percentage, usually found under Gross IRR. e.g., 88% -> 88.0)
+    "nav": number (The Fund's Total Value or Net Asset Value),
+    "tvpi": number,
+    "dpi": number,
+    "rvpi": number,
+    "irr": number,
+    "total_invested": number or null,
+    "total_realized": number or null,
+    "total_unrealized": number or null,
+    "total_value": number or null,
+    "gross_moic": number or null,
+    "gross_irr": number or null,
+    "net_moic": number or null,
+    "net_irr": number or null,
+    "investments_vs_expenses": "detailed breakdown of investment vs expense components",
+    "special_reallocations": "any special reallocations or adjustments mentioned"
 }}
 
 CRITICAL: Return ONLY the JSON object. No markdown code blocks, no backticks, no explanation text before or after. Just the raw JSON starting with {{ and ending with }}.
@@ -2459,8 +2473,19 @@ def show_fund_detail(fund):
                     is_future = st.checkbox("Future Call (Show Alert)")
                     notes = st.text_input("Notes", value=str(ai_data.get("notes") or ""))
                 
+                st.markdown("**Advanced PE/VC Parameters**")
+                adv_col1, adv_col2 = st.columns(2)
+                with adv_col1:
+                    inv_vs_exp = st.text_area("Investments vs Expenses (Breakdown)", value=str(ai_data.get("investments_vs_expenses") or ""))
+                with adv_col2:
+                    spec_realloc = st.text_area("Special Reallocations / Adjustments", value=str(ai_data.get("special_reallocations") or ""))
+
                 if st.form_submit_button("Save Call to System", type="primary"):
                     try:
+                        meta_data = {
+                            "investments_vs_expenses": inv_vs_exp,
+                            "special_reallocations": spec_realloc
+                        }
                         get_supabase().table("capital_calls").insert({
                             "fund_id": fund["id"], 
                             "call_number": call_num,
@@ -2475,7 +2500,8 @@ def show_fund_detail(fund):
                             "affects_called": is_recallable,
                             "equalisation_interest": equalisation_interest,
                             "is_future": is_future, 
-                            "notes": notes
+                            "notes": notes,
+                            "meta_data": meta_data
                         }).execute()
                                 
                         st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
@@ -2686,7 +2712,13 @@ def show_fund_detail(fund):
                     "affects_called": affects_called,
                     "equalisation_interest": eq_interest,
                     "is_future": bundle_is_future,
-                    "notes": note
+                    "notes": note,
+                    "meta_data": {
+                        "investments_vs_expenses": "",
+                        "special_reallocations": "",
+                        "bundle_component_type": component_type,
+                        "bundle_component_description": description
+                    }
                 })
 
             if preview_rows:
@@ -2916,13 +2948,42 @@ def show_fund_detail(fund):
                 rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f", value=float(ai_rep.get("rvpi") or 0.0))
                 irr = st.number_input("IRR %", step=0.1, format="%.1f", value=float(ai_rep.get("irr") or 0.0))
                 notes = st.text_area("Notes")
+
+            st.markdown("**Advanced PE/VC Parameters**")
+            adv_col1, adv_col2, adv_col3 = st.columns(3)
+            with adv_col1:
+                total_invested = st.number_input("Total Invested", value=float(ai_rep.get("total_invested") or 0.0))
+                total_realized = st.number_input("Total Realized", value=float(ai_rep.get("total_realized") or 0.0))
+                total_unrealized = st.number_input("Total Unrealized", value=float(ai_rep.get("total_unrealized") or 0.0))
+                total_value = st.number_input("Total Value (GP)", value=float(ai_rep.get("total_value") or 0.0))
+            with adv_col2:
+                gross_moic = st.number_input("Gross MOIC", value=float(ai_rep.get("gross_moic") or 0.0), step=0.01, format="%.2f")
+                gross_irr = st.number_input("Gross IRR %", value=float(ai_rep.get("gross_irr") or 0.0), step=0.1, format="%.1f")
+                net_moic = st.number_input("Net MOIC", value=float(ai_rep.get("net_moic") or 0.0), step=0.01, format="%.2f")
+                net_irr = st.number_input("Net IRR %", value=float(ai_rep.get("net_irr") or 0.0), step=0.1, format="%.1f")
+            with adv_col3:
+                inv_vs_exp = st.text_area("Investments vs Expenses", value=str(ai_rep.get("investments_vs_expenses") or ""))
+                spec_realloc = st.text_area("Special Reallocations", value=str(ai_rep.get("special_reallocations") or ""))
                 
             if st.form_submit_button("Save Report", type="primary"):
                 try:
+                    meta_data = {
+                        "total_invested": total_invested,
+                        "total_realized": total_realized,
+                        "total_unrealized": total_unrealized,
+                        "total_value": total_value,
+                        "gross_moic": gross_moic,
+                        "gross_irr": gross_irr,
+                        "net_moic": net_moic,
+                        "net_irr": net_irr,
+                        "investments_vs_expenses": inv_vs_exp,
+                        "special_reallocations": spec_realloc
+                    }
                     get_supabase().table("quarterly_reports").upsert({
                         "fund_id": fund["id"], "year": year, "quarter": quarter,
                         "report_date": str(report_date), "nav": nav,
-                        "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes
+                        "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes,
+                        "meta_data": meta_data
                     }).execute()
                     
                     st.session_state.pop(f"rep_ai_result_{fund['id']}", None)
@@ -3277,14 +3338,41 @@ def show_reports():
                         col3, col4 = st.columns(2)
                         with col3:
                             rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f")
-                        with col4:
                             irr = st.number_input("IRR %", step=0.1, format="%.1f")
-                        
-                        notes = st.text_area("Notes")
+                        with col4:
+                            notes = st.text_area("Notes")
+
+                        st.markdown("**Advanced PE/VC Parameters**")
+                        adv_col1, adv_col2, adv_col3 = st.columns(3)
+                        with adv_col1:
+                            total_invested = st.number_input("Total Invested", key=f"m_total_invested_{selected_fund}", min_value=0.0)
+                            total_realized = st.number_input("Total Realized", key=f"m_total_realized_{selected_fund}", min_value=0.0)
+                            total_unrealized = st.number_input("Total Unrealized", key=f"m_total_unrealized_{selected_fund}", min_value=0.0)
+                            total_value = st.number_input("Total Value (GP)", key=f"m_total_value_{selected_fund}", min_value=0.0)
+                        with adv_col2:
+                            gross_moic = st.number_input("Gross MOIC", key=f"m_gross_moic_{selected_fund}", min_value=0.0, step=0.01, format="%.2f")
+                            gross_irr = st.number_input("Gross IRR %", key=f"m_gross_irr_{selected_fund}", step=0.1, format="%.1f")
+                            net_moic = st.number_input("Net MOIC", key=f"m_net_moic_{selected_fund}", min_value=0.0, step=0.01, format="%.2f")
+                            net_irr = st.number_input("Net IRR %", key=f"m_net_irr_{selected_fund}", step=0.1, format="%.1f")
+                        with adv_col3:
+                            inv_vs_exp = st.text_area("Investments vs Expenses", key=f"m_inv_vs_exp_{selected_fund}")
+                            spec_realloc = st.text_area("Special Reallocations", key=f"m_spec_realloc_{selected_fund}")
                         
                         if st.form_submit_button("💾 Save Report", type="primary"):
                             try:
                                 fund_id = fund_options[selected_fund]
+                                meta_data = {
+                                    "total_invested": total_invested,
+                                    "total_realized": total_realized,
+                                    "total_unrealized": total_unrealized,
+                                    "total_value": total_value,
+                                    "gross_moic": gross_moic,
+                                    "gross_irr": gross_irr,
+                                    "net_moic": net_moic,
+                                    "net_irr": net_irr,
+                                    "investments_vs_expenses": inv_vs_exp,
+                                    "special_reallocations": spec_realloc
+                                }
                                 sb.table("quarterly_reports").insert({
                                     "fund_id": fund_id,
                                     "year": year,
@@ -3295,7 +3383,8 @@ def show_reports():
                                     "dpi": dpi,
                                     "rvpi": rvpi,
                                     "irr": irr,
-                                    "notes": notes
+                                    "notes": notes,
+                                    "meta_data": meta_data
                                 }).execute()
                                 log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
                                 st.success("✅ Report saved!")
@@ -3343,9 +3432,37 @@ def show_reports():
                                         
                                         irr_ai = st.number_input("IRR %", value=float(ai_result.get("irr") or 0.0), step=0.1, format="%.1f")
                                         
+                                        st.markdown("**Advanced PE/VC Parameters**")
+                                        ai_adv_col1, ai_adv_col2, ai_adv_col3 = st.columns(3)
+                                        with ai_adv_col1:
+                                            total_invested_ai = st.number_input("Total Invested", key="ai_total_invested", value=float(ai_result.get("total_invested") or 0.0))
+                                            total_realized_ai = st.number_input("Total Realized", key="ai_total_realized", value=float(ai_result.get("total_realized") or 0.0))
+                                            total_unrealized_ai = st.number_input("Total Unrealized", key="ai_total_unrealized", value=float(ai_result.get("total_unrealized") or 0.0))
+                                            total_value_ai = st.number_input("Total Value (GP)", key="ai_total_value", value=float(ai_result.get("total_value") or 0.0))
+                                        with ai_adv_col2:
+                                            gross_moic_ai = st.number_input("Gross MOIC", key="ai_gross_moic", value=float(ai_result.get("gross_moic") or 0.0), step=0.01, format="%.2f")
+                                            gross_irr_ai = st.number_input("Gross IRR %", key="ai_gross_irr", value=float(ai_result.get("gross_irr") or 0.0), step=0.1, format="%.1f")
+                                            net_moic_ai = st.number_input("Net MOIC", key="ai_net_moic", value=float(ai_result.get("net_moic") or 0.0), step=0.01, format="%.2f")
+                                            net_irr_ai = st.number_input("Net IRR %", key="ai_net_irr", value=float(ai_result.get("net_irr") or 0.0), step=0.1, format="%.1f")
+                                        with ai_adv_col3:
+                                            inv_vs_exp_ai = st.text_area("Investments vs Expenses", key="ai_inv_vs_exp", value=str(ai_result.get("investments_vs_expenses") or ""))
+                                            spec_realloc_ai = st.text_area("Special Reallocations", key="ai_spec_realloc", value=str(ai_result.get("special_reallocations") or ""))
+
                                         if st.form_submit_button("💾 Confirm & Save", type="primary"):
                                             try:
                                                 fund_id = fund_options[selected_fund_upload]
+                                                meta_data = {
+                                                    "total_invested": total_invested_ai,
+                                                    "total_realized": total_realized_ai,
+                                                    "total_unrealized": total_unrealized_ai,
+                                                    "total_value": total_value_ai,
+                                                    "gross_moic": gross_moic_ai,
+                                                    "gross_irr": gross_irr_ai,
+                                                    "net_moic": net_moic_ai,
+                                                    "net_irr": net_irr_ai,
+                                                    "investments_vs_expenses": inv_vs_exp_ai,
+                                                    "special_reallocations": spec_realloc_ai
+                                                }
                                                 sb.table("quarterly_reports").insert({
                                                     "fund_id": fund_id,
                                                     "year": year_ai,
@@ -3355,7 +3472,8 @@ def show_reports():
                                                     "tvpi": tvpi_ai,
                                                     "dpi": dpi_ai,
                                                     "rvpi": rvpi_ai,
-                                                    "irr": irr_ai
+                                                    "irr": irr_ai,
+                                                    "meta_data": meta_data
                                                 }).execute()
                                                 st.success("✅ Report saved!")
                                                 st.session_state.pop("report_ai_result", None)
@@ -4038,14 +4156,41 @@ def show_reports():
                         col3, col4 = st.columns(2)
                         with col3:
                             rvpi = st.number_input("RVPI", min_value=0.0, step=0.01, format="%.2f")
-                        with col4:
                             irr = st.number_input("IRR %", step=0.1, format="%.1f")
-                        
-                        notes = st.text_area("Notes")
+                        with col4:
+                            notes = st.text_area("Notes")
+
+                        st.markdown("**Advanced PE/VC Parameters**")
+                        adv_col1, adv_col2, adv_col3 = st.columns(3)
+                        with adv_col1:
+                            total_invested = st.number_input("Total Invested", key=f"m_total_invested_{selected_fund}", min_value=0.0)
+                            total_realized = st.number_input("Total Realized", key=f"m_total_realized_{selected_fund}", min_value=0.0)
+                            total_unrealized = st.number_input("Total Unrealized", key=f"m_total_unrealized_{selected_fund}", min_value=0.0)
+                            total_value = st.number_input("Total Value (GP)", key=f"m_total_value_{selected_fund}", min_value=0.0)
+                        with adv_col2:
+                            gross_moic = st.number_input("Gross MOIC", key=f"m_gross_moic_{selected_fund}", min_value=0.0, step=0.01, format="%.2f")
+                            gross_irr = st.number_input("Gross IRR %", key=f"m_gross_irr_{selected_fund}", step=0.1, format="%.1f")
+                            net_moic = st.number_input("Net MOIC", key=f"m_net_moic_{selected_fund}", min_value=0.0, step=0.01, format="%.2f")
+                            net_irr = st.number_input("Net IRR %", key=f"m_net_irr_{selected_fund}", step=0.1, format="%.1f")
+                        with adv_col3:
+                            inv_vs_exp = st.text_area("Investments vs Expenses", key=f"m_inv_vs_exp_{selected_fund}")
+                            spec_realloc = st.text_area("Special Reallocations", key=f"m_spec_realloc_{selected_fund}")
                         
                         if st.form_submit_button("💾 Save Report", type="primary"):
                             try:
                                 fund_id = fund_options[selected_fund]
+                                meta_data = {
+                                    "total_invested": total_invested,
+                                    "total_realized": total_realized,
+                                    "total_unrealized": total_unrealized,
+                                    "total_value": total_value,
+                                    "gross_moic": gross_moic,
+                                    "gross_irr": gross_irr,
+                                    "net_moic": net_moic,
+                                    "net_irr": net_irr,
+                                    "investments_vs_expenses": inv_vs_exp,
+                                    "special_reallocations": spec_realloc
+                                }
                                 sb.table("quarterly_reports").insert({
                                     "fund_id": fund_id,
                                     "year": year,
@@ -4056,7 +4201,8 @@ def show_reports():
                                     "dpi": dpi,
                                     "rvpi": rvpi,
                                     "irr": irr,
-                                    "notes": notes
+                                    "notes": notes,
+                                    "meta_data": meta_data
                                 }).execute()
                                 log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
                                 st.success("✅ Report saved!")
@@ -4104,9 +4250,37 @@ def show_reports():
                                         
                                         irr_ai = st.number_input("IRR %", value=float(ai_result.get("irr") or 0.0), step=0.1, format="%.1f")
                                         
+                                        st.markdown("**Advanced PE/VC Parameters**")
+                                        ai_adv_col1, ai_adv_col2, ai_adv_col3 = st.columns(3)
+                                        with ai_adv_col1:
+                                            total_invested_ai = st.number_input("Total Invested", key="ai_total_invested", value=float(ai_result.get("total_invested") or 0.0))
+                                            total_realized_ai = st.number_input("Total Realized", key="ai_total_realized", value=float(ai_result.get("total_realized") or 0.0))
+                                            total_unrealized_ai = st.number_input("Total Unrealized", key="ai_total_unrealized", value=float(ai_result.get("total_unrealized") or 0.0))
+                                            total_value_ai = st.number_input("Total Value (GP)", key="ai_total_value", value=float(ai_result.get("total_value") or 0.0))
+                                        with ai_adv_col2:
+                                            gross_moic_ai = st.number_input("Gross MOIC", key="ai_gross_moic", value=float(ai_result.get("gross_moic") or 0.0), step=0.01, format="%.2f")
+                                            gross_irr_ai = st.number_input("Gross IRR %", key="ai_gross_irr", value=float(ai_result.get("gross_irr") or 0.0), step=0.1, format="%.1f")
+                                            net_moic_ai = st.number_input("Net MOIC", key="ai_net_moic", value=float(ai_result.get("net_moic") or 0.0), step=0.01, format="%.2f")
+                                            net_irr_ai = st.number_input("Net IRR %", key="ai_net_irr", value=float(ai_result.get("net_irr") or 0.0), step=0.1, format="%.1f")
+                                        with ai_adv_col3:
+                                            inv_vs_exp_ai = st.text_area("Investments vs Expenses", key="ai_inv_vs_exp", value=str(ai_result.get("investments_vs_expenses") or ""))
+                                            spec_realloc_ai = st.text_area("Special Reallocations", key="ai_spec_realloc", value=str(ai_result.get("special_reallocations") or ""))
+
                                         if st.form_submit_button("💾 Confirm & Save", type="primary"):
                                             try:
                                                 fund_id = fund_options[selected_fund_upload]
+                                                meta_data = {
+                                                    "total_invested": total_invested_ai,
+                                                    "total_realized": total_realized_ai,
+                                                    "total_unrealized": total_unrealized_ai,
+                                                    "total_value": total_value_ai,
+                                                    "gross_moic": gross_moic_ai,
+                                                    "gross_irr": gross_irr_ai,
+                                                    "net_moic": net_moic_ai,
+                                                    "net_irr": net_irr_ai,
+                                                    "investments_vs_expenses": inv_vs_exp_ai,
+                                                    "special_reallocations": spec_realloc_ai
+                                                }
                                                 sb.table("quarterly_reports").insert({
                                                     "fund_id": fund_id,
                                                     "year": year_ai,
@@ -4116,7 +4290,8 @@ def show_reports():
                                                     "tvpi": tvpi_ai,
                                                     "dpi": dpi_ai,
                                                     "rvpi": rvpi_ai,
-                                                    "irr": irr_ai
+                                                    "irr": irr_ai,
+                                                    "meta_data": meta_data
                                                 }).execute()
                                                 st.success("✅ Report saved!")
                                                 st.session_state.pop("report_ai_result", None)
