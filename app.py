@@ -2486,7 +2486,7 @@ def show_fund_detail(fund):
                             "investments_vs_expenses": inv_vs_exp,
                             "special_reallocations": spec_realloc
                         }
-                        response = get_supabase().table("capital_calls").insert({
+                        payload = {
                             "fund_id": fund["id"], 
                             "call_number": call_num,
                             "call_date": str(call_date), 
@@ -2502,10 +2502,10 @@ def show_fund_detail(fund):
                             "is_future": is_future, 
                             "notes": notes,
                             "meta_data": meta_data
-                        }).execute()
+                        }
+                        response = get_supabase().table("capital_calls").insert(payload).execute()
                                 
                         st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
-                        st.write("Debug Database Response:", response.data)
                         st.success("✅ Saved!")
                         clear_cache_and_rerun()
                     except Exception as e:
@@ -2752,8 +2752,8 @@ def show_fund_detail(fund):
                     st.error("Bundle was not saved. Fix validation errors above and try again.")
                 else:
                     try:
-                        response = get_supabase().table("capital_calls").insert(rows_to_insert).execute()
-                        st.write("Debug Database Response:", response.data)
+                        payload = rows_to_insert
+                        response = get_supabase().table("capital_calls").insert(payload).execute()
                         st.success("✅ Bundle components saved!")
                         clear_cache_and_rerun()
                     except Exception as e:
@@ -2981,15 +2981,15 @@ def show_fund_detail(fund):
                         "investments_vs_expenses": inv_vs_exp,
                         "special_reallocations": spec_realloc
                     }
-                    response = get_supabase().table("quarterly_reports").insert({
+                    payload = {
                         "fund_id": fund["id"], "year": year, "quarter": quarter,
                         "report_date": str(report_date), "nav": nav,
                         "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes,
                         "meta_data": meta_data
-                    }).execute()
+                    }
+                    response = get_supabase().table("quarterly_reports").insert(payload).execute()
                     
                     st.session_state.pop(f"rep_ai_result_{fund['id']}", None)
-                    st.write("Debug Database Response:", response.data)
                     st.success("✅ Saved!")
                     clear_cache_and_rerun()
                 except Exception as e:
@@ -3298,6 +3298,77 @@ def show_investors():
                                 st.rerun()
                     st.divider()
 
+def render_quarterly_report_ai_confirm_form(fund_options, selected_fund_upload, ai_result, form_key="ai_report_confirm"):
+    if not ai_result:
+        return
+
+    st.success("Extracted! Review below and save:")
+
+    with st.form(form_key):
+        col1, col2 = st.columns(2)
+        with col1:
+            year_ai = st.number_input("Year", value=int(ai_result.get("year") or 2025), key=f"{form_key}_year")
+            quarter_ai = st.selectbox("Quarter", [1, 2, 3, 4], index=[1, 2, 3, 4].index(int(ai_result.get("quarter") or 1)), key=f"{form_key}_quarter")
+            nav_ai = st.number_input("NAV", value=float(ai_result.get("nav") or 0.0), key=f"{form_key}_nav")
+        with col2:
+            tvpi_ai = st.number_input("TVPI", value=float(ai_result.get("tvpi") or 0.0), step=0.01, format="%.2f", key=f"{form_key}_tvpi")
+            dpi_ai = st.number_input("DPI", value=float(ai_result.get("dpi") or 0.0), step=0.01, format="%.2f", key=f"{form_key}_dpi")
+            rvpi_ai = st.number_input("RVPI", value=float(ai_result.get("rvpi") or 0.0), step=0.01, format="%.2f", key=f"{form_key}_rvpi")
+
+        irr_ai = st.number_input("IRR %", value=float(ai_result.get("irr") or 0.0), step=0.1, format="%.1f", key=f"{form_key}_irr")
+
+        st.markdown("**Advanced PE/VC Parameters**")
+        ai_adv_col1, ai_adv_col2, ai_adv_col3 = st.columns(3)
+        with ai_adv_col1:
+            total_invested_ai = st.number_input("Total Invested", key=f"{form_key}_total_invested", value=float(ai_result.get("total_invested") or 0.0))
+            total_realized_ai = st.number_input("Total Realized", key=f"{form_key}_total_realized", value=float(ai_result.get("total_realized") or 0.0))
+            total_unrealized_ai = st.number_input("Total Unrealized", key=f"{form_key}_total_unrealized", value=float(ai_result.get("total_unrealized") or 0.0))
+            total_value_ai = st.number_input("Total Value (GP)", key=f"{form_key}_total_value", value=float(ai_result.get("total_value") or 0.0))
+        with ai_adv_col2:
+            gross_moic_ai = st.number_input("Gross MOIC", key=f"{form_key}_gross_moic", value=float(ai_result.get("gross_moic") or 0.0), step=0.01, format="%.2f")
+            gross_irr_ai = st.number_input("Gross IRR %", key=f"{form_key}_gross_irr", value=float(ai_result.get("gross_irr") or 0.0), step=0.1, format="%.1f")
+            net_moic_ai = st.number_input("Net MOIC", key=f"{form_key}_net_moic", value=float(ai_result.get("net_moic") or 0.0), step=0.01, format="%.2f")
+            net_irr_ai = st.number_input("Net IRR %", key=f"{form_key}_net_irr", value=float(ai_result.get("net_irr") or 0.0), step=0.1, format="%.1f")
+        with ai_adv_col3:
+            inv_vs_exp_ai = st.text_area("Investments vs Expenses", key=f"{form_key}_inv_vs_exp", value=str(ai_result.get("investments_vs_expenses") or ""))
+            spec_realloc_ai = st.text_area("Special Reallocations", key=f"{form_key}_spec_realloc", value=str(ai_result.get("special_reallocations") or ""))
+
+        if st.form_submit_button("Confirm & Save", type="primary"):
+            try:
+                fund_id = fund_options[selected_fund_upload]
+                meta_data = {
+                    "total_invested": total_invested_ai,
+                    "total_realized": total_realized_ai,
+                    "total_unrealized": total_unrealized_ai,
+                    "total_value": total_value_ai,
+                    "gross_moic": gross_moic_ai,
+                    "gross_irr": gross_irr_ai,
+                    "net_moic": net_moic_ai,
+                    "net_irr": net_irr_ai,
+                    "investments_vs_expenses": inv_vs_exp_ai,
+                    "special_reallocations": spec_realloc_ai
+                }
+                payload = {
+                    "fund_id": fund_id,
+                    "year": year_ai,
+                    "quarter": quarter_ai,
+                    "report_date": str(date.today()),
+                    "nav": nav_ai,
+                    "tvpi": tvpi_ai,
+                    "dpi": dpi_ai,
+                    "rvpi": rvpi_ai,
+                    "irr": irr_ai,
+                    "meta_data": meta_data
+                }
+                response = get_supabase().table("quarterly_reports").insert(payload).execute()
+                st.success("✅ Report saved!")
+                st.session_state.pop("report_ai_result", None)
+                st.session_state.pop("report_ai_selected_fund", None)
+                clear_cache_and_rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+
 def show_reports():
     st.title("📈 Reports & Analytics")
     
@@ -3376,7 +3447,7 @@ def show_reports():
                                     "investments_vs_expenses": inv_vs_exp,
                                     "special_reallocations": spec_realloc
                                 }
-                                response = sb.table("quarterly_reports").insert({
+                                payload = {
                                     "fund_id": fund_id,
                                     "year": year,
                                     "quarter": quarter,
@@ -3388,9 +3459,9 @@ def show_reports():
                                     "irr": irr,
                                     "notes": notes,
                                     "meta_data": meta_data
-                                }).execute()
+                                }
+                                response = get_supabase().table("quarterly_reports").insert(payload).execute()
                                 log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
-                                st.write("Debug Database Response:", response.data)
                                 st.success("✅ Report saved!")
                                 clear_cache_and_rerun()
                             except Exception as e:
@@ -3401,92 +3472,31 @@ def show_reports():
                     selected_fund_upload = st.selectbox("Select Fund", list(fund_options.keys()), key="upload_fund")
                     uploaded_file = st.file_uploader("Upload File", type=["pdf", "xlsx", "xls", "csv"])
                     
-                    if uploaded_file:
-                        if st.button("🤖 Analyze with AI", type="primary"):
-                            with st.spinner("Claude is analyzing..."):
-                                try:
-                                    file_bytes = uploaded_file.read()
-                                    file_name = uploaded_file.name
-                                    
-                                    if file_name.lower().endswith('.pdf'):
-                                        rep_text = extract_pdf_text(file_bytes)
-                                    else:
-                                        if file_name.lower().endswith('.csv'):
-                                            df = pd.read_csv(io.BytesIO(file_bytes))
-                                        else:
-                                            df = pd.read_excel(io.BytesIO(file_bytes))
-                                        rep_text = df.to_string(index=False)
-                                        if len(rep_text) > 12000:
-                                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
-                                    
-                                    ai_result = analyze_quarterly_report_with_ai(rep_text)
-                                    st.session_state.report_ai_result = ai_result
-                                    st.success("✅ Extracted! Review below and save:")
-                                    
-                                    with st.form("ai_report_confirm"):
-                                        col1, col2 = st.columns(2)
-                                        with col1:
-                                            year_ai = st.number_input("Year", value=int(ai_result.get("year") or 2025))
-                                            quarter_ai = st.selectbox("Quarter", [1,2,3,4], index=[1,2,3,4].index(int(ai_result.get("quarter") or 1)))
-                                            nav_ai = st.number_input("NAV", value=float(ai_result.get("nav") or 0.0))
-                                        with col2:
-                                            tvpi_ai = st.number_input("TVPI", value=float(ai_result.get("tvpi") or 0.0), step=0.01, format="%.2f")
-                                            dpi_ai = st.number_input("DPI", value=float(ai_result.get("dpi") or 0.0), step=0.01, format="%.2f")
-                                            rvpi_ai = st.number_input("RVPI", value=float(ai_result.get("rvpi") or 0.0), step=0.01, format="%.2f")
-                                        
-                                        irr_ai = st.number_input("IRR %", value=float(ai_result.get("irr") or 0.0), step=0.1, format="%.1f")
-                                        
-                                        st.markdown("**Advanced PE/VC Parameters**")
-                                        ai_adv_col1, ai_adv_col2, ai_adv_col3 = st.columns(3)
-                                        with ai_adv_col1:
-                                            total_invested_ai = st.number_input("Total Invested", key="ai_total_invested", value=float(ai_result.get("total_invested") or 0.0))
-                                            total_realized_ai = st.number_input("Total Realized", key="ai_total_realized", value=float(ai_result.get("total_realized") or 0.0))
-                                            total_unrealized_ai = st.number_input("Total Unrealized", key="ai_total_unrealized", value=float(ai_result.get("total_unrealized") or 0.0))
-                                            total_value_ai = st.number_input("Total Value (GP)", key="ai_total_value", value=float(ai_result.get("total_value") or 0.0))
-                                        with ai_adv_col2:
-                                            gross_moic_ai = st.number_input("Gross MOIC", key="ai_gross_moic", value=float(ai_result.get("gross_moic") or 0.0), step=0.01, format="%.2f")
-                                            gross_irr_ai = st.number_input("Gross IRR %", key="ai_gross_irr", value=float(ai_result.get("gross_irr") or 0.0), step=0.1, format="%.1f")
-                                            net_moic_ai = st.number_input("Net MOIC", key="ai_net_moic", value=float(ai_result.get("net_moic") or 0.0), step=0.01, format="%.2f")
-                                            net_irr_ai = st.number_input("Net IRR %", key="ai_net_irr", value=float(ai_result.get("net_irr") or 0.0), step=0.1, format="%.1f")
-                                        with ai_adv_col3:
-                                            inv_vs_exp_ai = st.text_area("Investments vs Expenses", key="ai_inv_vs_exp", value=str(ai_result.get("investments_vs_expenses") or ""))
-                                            spec_realloc_ai = st.text_area("Special Reallocations", key="ai_spec_realloc", value=str(ai_result.get("special_reallocations") or ""))
+                    if uploaded_file and st.button("🤖 Analyze with AI", type="primary"):
+                        with st.spinner("Claude is analyzing..."):
+                            try:
+                                file_bytes = uploaded_file.read()
+                                file_name = uploaded_file.name
 
-                                        if st.form_submit_button("💾 Confirm & Save", type="primary"):
-                                            try:
-                                                fund_id = fund_options[selected_fund_upload]
-                                                meta_data = {
-                                                    "total_invested": total_invested_ai,
-                                                    "total_realized": total_realized_ai,
-                                                    "total_unrealized": total_unrealized_ai,
-                                                    "total_value": total_value_ai,
-                                                    "gross_moic": gross_moic_ai,
-                                                    "gross_irr": gross_irr_ai,
-                                                    "net_moic": net_moic_ai,
-                                                    "net_irr": net_irr_ai,
-                                                    "investments_vs_expenses": inv_vs_exp_ai,
-                                                    "special_reallocations": spec_realloc_ai
-                                                }
-                                                response = sb.table("quarterly_reports").insert({
-                                                    "fund_id": fund_id,
-                                                    "year": year_ai,
-                                                    "quarter": quarter_ai,
-                                                    "report_date": str(date.today()),
-                                                    "nav": nav_ai,
-                                                    "tvpi": tvpi_ai,
-                                                    "dpi": dpi_ai,
-                                                    "rvpi": rvpi_ai,
-                                                    "irr": irr_ai,
-                                                    "meta_data": meta_data
-                                                }).execute()
-                                                st.write("Debug Database Response:", response.data)
-                                                st.success("✅ Report saved!")
-                                                st.session_state.pop("report_ai_result", None)
-                                                clear_cache_and_rerun()
-                                            except Exception as e:
-                                                st.error(f"Error: {e}")
-                                except Exception as e:
-                                    st.error(f"Analysis error: {e}")
+                                if file_name.lower().endswith('.pdf'):
+                                    rep_text = extract_pdf_text(file_bytes)
+                                else:
+                                    if file_name.lower().endswith('.csv'):
+                                        df = pd.read_csv(io.BytesIO(file_bytes))
+                                    else:
+                                        df = pd.read_excel(io.BytesIO(file_bytes))
+                                    rep_text = df.to_string(index=False)
+                                    if len(rep_text) > 12000:
+                                        rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
+
+                                st.session_state.report_ai_result = analyze_quarterly_report_with_ai(rep_text)
+                                st.session_state.report_ai_selected_fund = selected_fund_upload
+                            except Exception as e:
+                                st.error(f"Analysis error: {e}")
+
+                    ai_result = st.session_state.get("report_ai_result")
+                    ai_selected_fund = st.session_state.get("report_ai_selected_fund", selected_fund_upload)
+                    render_quarterly_report_ai_confirm_form(fund_options, ai_selected_fund, ai_result)
     
     with col_summary:
         with st.expander("📊 Portfolio Summary Statistics"):
@@ -4196,7 +4206,7 @@ def show_reports():
                                     "investments_vs_expenses": inv_vs_exp,
                                     "special_reallocations": spec_realloc
                                 }
-                                response = sb.table("quarterly_reports").insert({
+                                payload = {
                                     "fund_id": fund_id,
                                     "year": year,
                                     "quarter": quarter,
@@ -4208,9 +4218,9 @@ def show_reports():
                                     "irr": irr,
                                     "notes": notes,
                                     "meta_data": meta_data
-                                }).execute()
+                                }
+                                response = get_supabase().table("quarterly_reports").insert(payload).execute()
                                 log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
-                                st.write("Debug Database Response:", response.data)
                                 st.success("✅ Report saved!")
                                 clear_cache_and_rerun()
                             except Exception as e:
@@ -4221,92 +4231,31 @@ def show_reports():
                     selected_fund_upload = st.selectbox("Select Fund", list(fund_options.keys()), key="upload_fund")
                     uploaded_file = st.file_uploader("Upload File", type=["pdf", "xlsx", "xls", "csv"])
                     
-                    if uploaded_file:
-                        if st.button("🤖 Analyze with AI", type="primary"):
-                            with st.spinner("Claude is analyzing..."):
-                                try:
-                                    file_bytes = uploaded_file.read()
-                                    file_name = uploaded_file.name
-                                    
-                                    if file_name.lower().endswith('.pdf'):
-                                        rep_text = extract_pdf_text(file_bytes)
-                                    else:
-                                        if file_name.lower().endswith('.csv'):
-                                            df = pd.read_csv(io.BytesIO(file_bytes))
-                                        else:
-                                            df = pd.read_excel(io.BytesIO(file_bytes))
-                                        rep_text = df.to_string(index=False)
-                                        if len(rep_text) > 12000:
-                                            rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
-                                    
-                                    ai_result = analyze_quarterly_report_with_ai(rep_text)
-                                    st.session_state.report_ai_result = ai_result
-                                    st.success("✅ Extracted! Review below and save:")
-                                    
-                                    with st.form("ai_report_confirm"):
-                                        col1, col2 = st.columns(2)
-                                        with col1:
-                                            year_ai = st.number_input("Year", value=int(ai_result.get("year") or 2025))
-                                            quarter_ai = st.selectbox("Quarter", [1,2,3,4], index=[1,2,3,4].index(int(ai_result.get("quarter") or 1)))
-                                            nav_ai = st.number_input("NAV", value=float(ai_result.get("nav") or 0.0))
-                                        with col2:
-                                            tvpi_ai = st.number_input("TVPI", value=float(ai_result.get("tvpi") or 0.0), step=0.01, format="%.2f")
-                                            dpi_ai = st.number_input("DPI", value=float(ai_result.get("dpi") or 0.0), step=0.01, format="%.2f")
-                                            rvpi_ai = st.number_input("RVPI", value=float(ai_result.get("rvpi") or 0.0), step=0.01, format="%.2f")
-                                        
-                                        irr_ai = st.number_input("IRR %", value=float(ai_result.get("irr") or 0.0), step=0.1, format="%.1f")
-                                        
-                                        st.markdown("**Advanced PE/VC Parameters**")
-                                        ai_adv_col1, ai_adv_col2, ai_adv_col3 = st.columns(3)
-                                        with ai_adv_col1:
-                                            total_invested_ai = st.number_input("Total Invested", key="ai_total_invested", value=float(ai_result.get("total_invested") or 0.0))
-                                            total_realized_ai = st.number_input("Total Realized", key="ai_total_realized", value=float(ai_result.get("total_realized") or 0.0))
-                                            total_unrealized_ai = st.number_input("Total Unrealized", key="ai_total_unrealized", value=float(ai_result.get("total_unrealized") or 0.0))
-                                            total_value_ai = st.number_input("Total Value (GP)", key="ai_total_value", value=float(ai_result.get("total_value") or 0.0))
-                                        with ai_adv_col2:
-                                            gross_moic_ai = st.number_input("Gross MOIC", key="ai_gross_moic", value=float(ai_result.get("gross_moic") or 0.0), step=0.01, format="%.2f")
-                                            gross_irr_ai = st.number_input("Gross IRR %", key="ai_gross_irr", value=float(ai_result.get("gross_irr") or 0.0), step=0.1, format="%.1f")
-                                            net_moic_ai = st.number_input("Net MOIC", key="ai_net_moic", value=float(ai_result.get("net_moic") or 0.0), step=0.01, format="%.2f")
-                                            net_irr_ai = st.number_input("Net IRR %", key="ai_net_irr", value=float(ai_result.get("net_irr") or 0.0), step=0.1, format="%.1f")
-                                        with ai_adv_col3:
-                                            inv_vs_exp_ai = st.text_area("Investments vs Expenses", key="ai_inv_vs_exp", value=str(ai_result.get("investments_vs_expenses") or ""))
-                                            spec_realloc_ai = st.text_area("Special Reallocations", key="ai_spec_realloc", value=str(ai_result.get("special_reallocations") or ""))
+                    if uploaded_file and st.button("🤖 Analyze with AI", type="primary"):
+                        with st.spinner("Claude is analyzing..."):
+                            try:
+                                file_bytes = uploaded_file.read()
+                                file_name = uploaded_file.name
 
-                                        if st.form_submit_button("💾 Confirm & Save", type="primary"):
-                                            try:
-                                                fund_id = fund_options[selected_fund_upload]
-                                                meta_data = {
-                                                    "total_invested": total_invested_ai,
-                                                    "total_realized": total_realized_ai,
-                                                    "total_unrealized": total_unrealized_ai,
-                                                    "total_value": total_value_ai,
-                                                    "gross_moic": gross_moic_ai,
-                                                    "gross_irr": gross_irr_ai,
-                                                    "net_moic": net_moic_ai,
-                                                    "net_irr": net_irr_ai,
-                                                    "investments_vs_expenses": inv_vs_exp_ai,
-                                                    "special_reallocations": spec_realloc_ai
-                                                }
-                                                response = sb.table("quarterly_reports").insert({
-                                                    "fund_id": fund_id,
-                                                    "year": year_ai,
-                                                    "quarter": quarter_ai,
-                                                    "report_date": str(date.today()),
-                                                    "nav": nav_ai,
-                                                    "tvpi": tvpi_ai,
-                                                    "dpi": dpi_ai,
-                                                    "rvpi": rvpi_ai,
-                                                    "irr": irr_ai,
-                                                    "meta_data": meta_data
-                                                }).execute()
-                                                st.write("Debug Database Response:", response.data)
-                                                st.success("✅ Report saved!")
-                                                st.session_state.pop("report_ai_result", None)
-                                                clear_cache_and_rerun()
-                                            except Exception as e:
-                                                st.error(f"Error: {e}")
-                                except Exception as e:
-                                    st.error(f"Analysis error: {e}")
+                                if file_name.lower().endswith('.pdf'):
+                                    rep_text = extract_pdf_text(file_bytes)
+                                else:
+                                    if file_name.lower().endswith('.csv'):
+                                        df = pd.read_csv(io.BytesIO(file_bytes))
+                                    else:
+                                        df = pd.read_excel(io.BytesIO(file_bytes))
+                                    rep_text = df.to_string(index=False)
+                                    if len(rep_text) > 12000:
+                                        rep_text = rep_text[:4000] + "\n[...]\n" + rep_text[-8000:]
+
+                                st.session_state.report_ai_result = analyze_quarterly_report_with_ai(rep_text)
+                                st.session_state.report_ai_selected_fund = selected_fund_upload
+                            except Exception as e:
+                                st.error(f"Analysis error: {e}")
+
+                    ai_result = st.session_state.get("report_ai_result")
+                    ai_selected_fund = st.session_state.get("report_ai_selected_fund", selected_fund_upload)
+                    render_quarterly_report_ai_confirm_form(fund_options, ai_selected_fund, ai_result)
     
     with col_summary:
         with st.expander("📊 Portfolio Summary Statistics"):
