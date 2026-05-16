@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
 from collections import defaultdict
 from supabase import create_client, Client
+from pe_vc_metrics import normalize_quarterly_report_metrics
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 HARDCODED_ALLOWED_EMAILS = set()
@@ -515,6 +516,18 @@ NOTICE TEXT:
 def analyze_quarterly_report_with_ai(report_text: str) -> dict:
     prompt = f"""You are an expert private equity fund accountant. Carefully analyze this quarterly report, financial statement, or capital account statement and extract the financial performance metrics.
 Pay special attention to tables like "Fund Performance: Investments" or "Gross returns" which have columns such as "Capital invested", "Realised", "Unrealised", "Total", "Multiple", "IRR".
+For capital account statements:
+- Treat "Ending Capital Account Balance" as NAV.
+- Treat "Capital contributions" as Paid-in Capital / Total Invested.
+- Treat "Contributions to Date" as Paid-in Capital too; if shown in parentheses or as a negative accounting presentation, return it as a positive paid-in amount.
+- Treat "Contributions for Investments" as investment_contributions, not necessarily total paid-in.
+- Treat "Contributions for Expenses" as expense_contributions.
+- Treat distributions shown as "—", "-", blank, or null as 0.
+- Treat "Realized gain / (loss) —" and "Investment income —" as 0.
+- Keep expense lines as negative signed values.
+- Keep Special reallocation as its own signed field. Do not merge it into realized/unrealized gain.
+- "Unrealized gain / loss" is P&L appreciation, not residual NAV. Return it as unrealized_gain_loss. Residual/unrealized value is NAV unless a separate residual value is provided.
+- If explicit TVPI/MOIC/IRR fields are missing, return null, not 0. The app will derive valid multiples from NAV, paid-in capital, and distributions.
 
 Return ONLY a valid JSON object with these exact keys (use null if a specific metric is not found):
 {{
@@ -526,10 +539,24 @@ Return ONLY a valid JSON object with these exact keys (use null if a specific me
     "dpi": number,
     "rvpi": number,
     "irr": number,
+    "paid_in_capital": number or null,
+    "capital_contributions": number or null,
+    "contributions_to_date": number or null,
+    "investment_contributions": number or null,
+    "expense_contributions": number or null,
+    "distributions": number or null,
     "total_invested": number or null,
     "total_realized": number or null,
     "total_unrealized": number or null,
     "total_value": number or null,
+    "unrealized_gain_loss": number or null,
+    "special_reallocation": number or null,
+    "beginning_capital_account_balance": number or null,
+    "investment_income": number or null,
+    "management_fee": number or null,
+    "organizational_costs": number or null,
+    "other_expenses": number or null,
+    "realized_gain_loss": number or null,
     "gross_moic": number or null,
     "gross_irr": number or null,
     "net_moic": number or null,
@@ -578,7 +605,7 @@ REPORT TEXT:
         if start != -1 and end > start:
             content = content[start:end]
         
-        result = json.loads(content)
+        result = normalize_quarterly_report_metrics(json.loads(content))
         return result
         
     except json.JSONDecodeError as e:
@@ -2972,10 +2999,16 @@ def show_fund_detail(fund):
             if st.form_submit_button("Save Report", type="primary"):
                 try:
                     meta_data = {
+                        "paid_in_capital": total_invested,
+                        "distributions": total_realized,
+                        "investment_contributions": ai_rep.get("investment_contributions"),
+                        "expense_contributions": ai_rep.get("expense_contributions"),
                         "total_invested": total_invested,
                         "total_realized": total_realized,
                         "total_unrealized": total_unrealized,
                         "total_value": total_value,
+                        "unrealized_gain_loss": ai_rep.get("unrealized_gain_loss"),
+                        "special_reallocation": ai_rep.get("special_reallocation"),
                         "gross_moic": gross_moic,
                         "gross_irr": gross_irr,
                         "net_moic": net_moic,
@@ -2989,6 +3022,7 @@ def show_fund_detail(fund):
                         "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes,
                         "meta_data": meta_data
                     }
+                    payload = normalize_quarterly_report_payload(payload)
                     response = get_supabase().table("quarterly_reports").insert(payload).execute()
                     
                     st.session_state.pop(f"rep_ai_result_{fund['id']}", None)
@@ -3339,10 +3373,16 @@ def render_quarterly_report_ai_confirm_form(fund_options, selected_fund_upload, 
             try:
                 fund_id = fund_options[selected_fund_upload]
                 meta_data = {
+                    "paid_in_capital": total_invested_ai,
+                    "distributions": total_realized_ai,
+                    "investment_contributions": ai_result.get("investment_contributions"),
+                    "expense_contributions": ai_result.get("expense_contributions"),
                     "total_invested": total_invested_ai,
                     "total_realized": total_realized_ai,
                     "total_unrealized": total_unrealized_ai,
                     "total_value": total_value_ai,
+                    "unrealized_gain_loss": ai_result.get("unrealized_gain_loss"),
+                    "special_reallocation": ai_result.get("special_reallocation"),
                     "gross_moic": gross_moic_ai,
                     "gross_irr": gross_irr_ai,
                     "net_moic": net_moic_ai,
@@ -3362,6 +3402,7 @@ def render_quarterly_report_ai_confirm_form(fund_options, selected_fund_upload, 
                     "irr": irr_ai,
                     "meta_data": meta_data
                 }
+                payload = normalize_quarterly_report_payload(payload)
                 response = get_supabase().table("quarterly_reports").insert(payload).execute()
                 st.success("✅ Report saved!")
                 st.session_state.pop("report_ai_result", None)
@@ -3371,6 +3412,47 @@ def render_quarterly_report_ai_confirm_form(fund_options, selected_fund_upload, 
                 st.error(f"Error: {e}")
 
 
+REPORT_META_KEYS = [
+    "paid_in_capital",
+    "investment_contributions",
+    "expense_contributions",
+    "distributions",
+    "total_invested",
+    "total_realized",
+    "total_unrealized",
+    "total_value",
+    "unrealized_gain_loss",
+    "special_reallocation",
+    "gross_moic",
+    "gross_irr",
+    "net_moic",
+    "net_irr",
+    "investments_vs_expenses",
+    "special_reallocations",
+    "capital_account_reconciliation",
+    "capital_account_reconciliation_difference",
+    "validation_warnings",
+]
+
+
+def normalize_quarterly_report_payload(payload: dict) -> dict:
+    normalized_payload = dict(payload or {})
+    meta_data = normalized_payload.get("meta_data") or {}
+    combined = {**meta_data, **{k: normalized_payload.get(k) for k in ["nav", "tvpi", "dpi", "rvpi", "irr"]}}
+    normalized = normalize_quarterly_report_metrics(combined)
+
+    for key in ["nav", "tvpi", "dpi", "rvpi", "irr"]:
+        if key in normalized:
+            normalized_payload[key] = normalized.get(key)
+
+    normalized_meta = dict(meta_data)
+    for key in REPORT_META_KEYS:
+        if key in normalized:
+            normalized_meta[key] = normalized.get(key)
+    normalized_payload["meta_data"] = normalized_meta
+    return normalized_payload
+
+
 def get_report_meta_data(report: dict) -> dict:
     meta_data = (report or {}).get("meta_data", {}) or {}
     if isinstance(meta_data, str):
@@ -3378,7 +3460,11 @@ def get_report_meta_data(report: dict) -> dict:
             meta_data = json.loads(meta_data)
         except Exception:
             meta_data = {}
-    return meta_data if isinstance(meta_data, dict) else {}
+    meta_data = meta_data if isinstance(meta_data, dict) else {}
+    for key in ["tvpi", "dpi", "rvpi", "irr", "nav"]:
+        if key not in meta_data and (report or {}).get(key) is not None:
+            meta_data[key] = (report or {}).get(key)
+    return meta_data
 
 
 def render_report_meta_data(report: dict, currency_sym: str = "$"):
@@ -3386,13 +3472,32 @@ def render_report_meta_data(report: dict, currency_sym: str = "$"):
     if not meta_data:
         return
 
-    def has_value(key):
-        value = meta_data.get(key)
+    def value_for(keys):
+        for key in keys if isinstance(keys, list) else [keys]:
+            value = meta_data.get(key)
+            if value is not None and value != "":
+                return value
+        return None
+
+    def has_value(keys, allow_zero=False):
+        value = value_for(keys)
+        if value is None:
+            return False
+        if not allow_zero:
+            try:
+                return abs(float(value)) > 0
+            except Exception:
+                pass
         return value is not None and value != ""
 
     def fmt_currency_value(value):
         try:
-            return format_currency(float(value or 0), currency_sym)
+            amount = float(value or 0)
+            if amount == 0:
+                return f"{currency_sym}0"
+            if amount < 0:
+                return f"({format_currency(abs(amount), currency_sym)})"
+            return format_currency(amount, currency_sym)
         except Exception:
             return str(value)
 
@@ -3409,24 +3514,34 @@ def render_report_meta_data(report: dict, currency_sym: str = "$"):
             return str(value)
 
     metric_defs = [
-        ("Total Invested", "total_invested", fmt_currency_value),
-        ("Total Realized", "total_realized", fmt_currency_value),
-        ("Total Unrealized", "total_unrealized", fmt_currency_value),
-        ("Total Value", "total_value", fmt_currency_value),
-        ("Gross MOIC", "gross_moic", fmt_multiple_value),
-        ("Gross IRR", "gross_irr", fmt_percent_value),
-        ("Net MOIC", "net_moic", fmt_multiple_value),
-        ("Net IRR", "net_irr", fmt_percent_value),
+        ("Paid-in Capital", ["paid_in_capital", "total_invested"], fmt_currency_value, False),
+        ("Distributions", ["distributions", "total_realized"], fmt_currency_value, True),
+        ("DPI", "dpi", fmt_multiple_value, True),
+        ("TVPI", "tvpi", fmt_multiple_value, False),
+        ("Net MOIC", "net_moic", fmt_multiple_value, False),
+        ("Net IRR", "net_irr", fmt_percent_value, False),
+        ("Total Value", "total_value", fmt_currency_value, False),
+        ("Unrealized Value", "total_unrealized", fmt_currency_value, False),
+        ("Investment Contributions", "investment_contributions", fmt_currency_value, False),
+        ("Expense Contributions", "expense_contributions", fmt_currency_value, False),
+        ("Unrealized Gain/Loss", "unrealized_gain_loss", fmt_currency_value, False),
+        ("Special Reallocation", "special_reallocation", fmt_currency_value, False),
+        ("Gross MOIC", "gross_moic", fmt_multiple_value, False),
+        ("Gross IRR", "gross_irr", fmt_percent_value, False),
     ]
-    visible_metrics = [(label, key, formatter) for label, key, formatter in metric_defs if has_value(key)]
+    visible_metrics = [
+        (label, keys, formatter)
+        for label, keys, formatter, allow_zero in metric_defs
+        if has_value(keys, allow_zero=allow_zero)
+    ]
 
     if visible_metrics:
         st.markdown("**Advanced PE/VC Parameters**")
         for start in range(0, len(visible_metrics), 4):
             cols = st.columns(4)
-            for col, (label, key, formatter) in zip(cols, visible_metrics[start:start + 4]):
+            for col, (label, keys, formatter) in zip(cols, visible_metrics[start:start + 4]):
                 with col:
-                    st.metric(label, formatter(meta_data.get(key)))
+                    st.metric(label, formatter(value_for(keys)))
 
     investments_vs_expenses = str(meta_data.get("investments_vs_expenses") or "").strip()
     special_reallocations = str(meta_data.get("special_reallocations") or "").strip()
@@ -3504,6 +3619,8 @@ def show_reports():
                             try:
                                 fund_id = fund_options[selected_fund]
                                 meta_data = {
+                                    "paid_in_capital": total_invested,
+                                    "distributions": total_realized,
                                     "total_invested": total_invested,
                                     "total_realized": total_realized,
                                     "total_unrealized": total_unrealized,
@@ -3528,6 +3645,7 @@ def show_reports():
                                     "notes": notes,
                                     "meta_data": meta_data
                                 }
+                                payload = normalize_quarterly_report_payload(payload)
                                 response = get_supabase().table("quarterly_reports").insert(payload).execute()
                                 log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
                                 st.success("✅ Report saved!")
@@ -4275,6 +4393,8 @@ def show_reports():
                             try:
                                 fund_id = fund_options[selected_fund]
                                 meta_data = {
+                                    "paid_in_capital": total_invested,
+                                    "distributions": total_realized,
                                     "total_invested": total_invested,
                                     "total_realized": total_realized,
                                     "total_unrealized": total_unrealized,
@@ -4299,6 +4419,7 @@ def show_reports():
                                     "notes": notes,
                                     "meta_data": meta_data
                                 }
+                                payload = normalize_quarterly_report_payload(payload)
                                 response = get_supabase().table("quarterly_reports").insert(payload).execute()
                                 log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
                                 st.success("✅ Report saved!")
