@@ -2814,11 +2814,13 @@ def show_fund_detail(fund):
             st.markdown("**Quarterly Reports**")
             for r in reports:
                 with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
-                    col1, col_edit, col_del = st.columns([3, 1, 1])
-                    with col1:
-                        st.write(f"NAV (Fund): {format_currency(float(r.get('nav',0)), currency_sym)} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
-                        if r.get('notes'):
-                            st.write(f"Notes: {r.get('notes')}")
+                    st.write(f"NAV (Fund): {format_currency(float(r.get('nav',0)), currency_sym)} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
+                    if r.get('notes'):
+                        st.write(f"Notes: {r.get('notes')}")
+                    render_report_meta_data(r, currency_sym)
+
+                    st.divider()
+                    col_edit, col_del = st.columns([1, 1])
                     with col_edit:
                         if st.button("✏️ Edit", key=f"edit_rep_btn_{r['id']}"):
                             st.session_state[f"editing_rep_{r['id']}"] = True
@@ -3369,6 +3371,72 @@ def render_quarterly_report_ai_confirm_form(fund_options, selected_fund_upload, 
                 st.error(f"Error: {e}")
 
 
+def get_report_meta_data(report: dict) -> dict:
+    meta_data = (report or {}).get("meta_data", {}) or {}
+    if isinstance(meta_data, str):
+        try:
+            meta_data = json.loads(meta_data)
+        except Exception:
+            meta_data = {}
+    return meta_data if isinstance(meta_data, dict) else {}
+
+
+def render_report_meta_data(report: dict, currency_sym: str = "$"):
+    meta_data = get_report_meta_data(report)
+    if not meta_data:
+        return
+
+    def has_value(key):
+        value = meta_data.get(key)
+        return value is not None and value != ""
+
+    def fmt_currency_value(value):
+        try:
+            return format_currency(float(value or 0), currency_sym)
+        except Exception:
+            return str(value)
+
+    def fmt_multiple_value(value):
+        try:
+            return f"{float(value):.2f}x"
+        except Exception:
+            return str(value)
+
+    def fmt_percent_value(value):
+        try:
+            return f"{float(value):.1f}%"
+        except Exception:
+            return str(value)
+
+    metric_defs = [
+        ("Total Invested", "total_invested", fmt_currency_value),
+        ("Total Realized", "total_realized", fmt_currency_value),
+        ("Total Unrealized", "total_unrealized", fmt_currency_value),
+        ("Total Value", "total_value", fmt_currency_value),
+        ("Gross MOIC", "gross_moic", fmt_multiple_value),
+        ("Gross IRR", "gross_irr", fmt_percent_value),
+        ("Net MOIC", "net_moic", fmt_multiple_value),
+        ("Net IRR", "net_irr", fmt_percent_value),
+    ]
+    visible_metrics = [(label, key, formatter) for label, key, formatter in metric_defs if has_value(key)]
+
+    if visible_metrics:
+        st.markdown("**Advanced PE/VC Parameters**")
+        for start in range(0, len(visible_metrics), 4):
+            cols = st.columns(4)
+            for col, (label, key, formatter) in zip(cols, visible_metrics[start:start + 4]):
+                with col:
+                    st.metric(label, formatter(meta_data.get(key)))
+
+    investments_vs_expenses = str(meta_data.get("investments_vs_expenses") or "").strip()
+    special_reallocations = str(meta_data.get("special_reallocations") or "").strip()
+
+    if investments_vs_expenses:
+        st.info(f"Investments vs Expenses\n\n{investments_vs_expenses}")
+    if special_reallocations:
+        st.info(f"Special Reallocations\n\n{special_reallocations}")
+
+
 def show_reports():
     st.title("📈 Reports & Analytics")
     
@@ -3566,6 +3634,18 @@ def show_reports():
         for idx, row in df.iterrows():
             report_id = row["id"]
             with st.expander(f"{row['Fund']} - {row['Quarter']}", expanded=False):
+                rep = next((r for r in all_reports if r["id"] == report_id), {})
+                fund_for_report = next((f for f in funds if f["id"] == rep.get("fund_id")), {})
+                report_currency_sym = "€" if fund_for_report.get("currency") == "EUR" else "$"
+
+                base_cols = st.columns(4)
+                base_cols[0].metric("NAV", row["NAV"])
+                base_cols[1].metric("TVPI", row["TVPI"])
+                base_cols[2].metric("DPI", row["DPI"])
+                base_cols[3].metric("IRR", row["IRR"])
+                render_report_meta_data(rep, report_currency_sym)
+
+                st.divider()
                 col_edit, col_del = st.columns([5, 1])
                 with col_del:
                     if st.button("🗑️ Delete", key=f"del_rep_{report_id}"):
@@ -4332,6 +4412,18 @@ def show_reports():
         for idx, row in df.iterrows():
             report_id = row["id"]
             with st.expander(f"{row['Fund']} - {row['Quarter']}", expanded=False):
+                rep = next((r for r in all_reports if r["id"] == report_id), {})
+                fund_for_report = next((f for f in funds if f["id"] == rep.get("fund_id")), {})
+                report_currency_sym = "€" if fund_for_report.get("currency") == "EUR" else "$"
+
+                base_cols = st.columns(4)
+                base_cols[0].metric("NAV", row["NAV"])
+                base_cols[1].metric("TVPI", row["TVPI"])
+                base_cols[2].metric("DPI", row["DPI"])
+                base_cols[3].metric("IRR", row["IRR"])
+                render_report_meta_data(rep, report_currency_sym)
+
+                st.divider()
                 col_edit, col_del = st.columns([5, 1])
                 with col_del:
                     if st.button("🗑️ Delete", key=f"del_rep_{report_id}"):
