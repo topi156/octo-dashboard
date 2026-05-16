@@ -2486,7 +2486,7 @@ def show_fund_detail(fund):
                             "investments_vs_expenses": inv_vs_exp,
                             "special_reallocations": spec_realloc
                         }
-                        get_supabase().table("capital_calls").insert({
+                        response = get_supabase().table("capital_calls").insert({
                             "fund_id": fund["id"], 
                             "call_number": call_num,
                             "call_date": str(call_date), 
@@ -2505,6 +2505,7 @@ def show_fund_detail(fund):
                         }).execute()
                                 
                         st.session_state.pop(f"cc_ai_result_{fund['id']}", None)
+                        st.write("Debug Database Response:", response.data)
                         st.success("✅ Saved!")
                         clear_cache_and_rerun()
                     except Exception as e:
@@ -2751,7 +2752,8 @@ def show_fund_detail(fund):
                     st.error("Bundle was not saved. Fix validation errors above and try again.")
                 else:
                     try:
-                        get_supabase().table("capital_calls").insert(rows_to_insert).execute()
+                        response = get_supabase().table("capital_calls").insert(rows_to_insert).execute()
+                        st.write("Debug Database Response:", response.data)
                         st.success("✅ Bundle components saved!")
                         clear_cache_and_rerun()
                     except Exception as e:
@@ -2979,7 +2981,7 @@ def show_fund_detail(fund):
                         "investments_vs_expenses": inv_vs_exp,
                         "special_reallocations": spec_realloc
                     }
-                    get_supabase().table("quarterly_reports").upsert({
+                    response = get_supabase().table("quarterly_reports").insert({
                         "fund_id": fund["id"], "year": year, "quarter": quarter,
                         "report_date": str(report_date), "nav": nav,
                         "tvpi": tvpi, "dpi": dpi, "rvpi": rvpi, "irr": irr, "notes": notes,
@@ -2987,6 +2989,7 @@ def show_fund_detail(fund):
                     }).execute()
                     
                     st.session_state.pop(f"rep_ai_result_{fund['id']}", None)
+                    st.write("Debug Database Response:", response.data)
                     st.success("✅ Saved!")
                     clear_cache_and_rerun()
                 except Exception as e:
@@ -3373,7 +3376,7 @@ def show_reports():
                                     "investments_vs_expenses": inv_vs_exp,
                                     "special_reallocations": spec_realloc
                                 }
-                                sb.table("quarterly_reports").insert({
+                                response = sb.table("quarterly_reports").insert({
                                     "fund_id": fund_id,
                                     "year": year,
                                     "quarter": quarter,
@@ -3387,6 +3390,7 @@ def show_reports():
                                     "meta_data": meta_data
                                 }).execute()
                                 log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
+                                st.write("Debug Database Response:", response.data)
                                 st.success("✅ Report saved!")
                                 clear_cache_and_rerun()
                             except Exception as e:
@@ -3463,7 +3467,7 @@ def show_reports():
                                                     "investments_vs_expenses": inv_vs_exp_ai,
                                                     "special_reallocations": spec_realloc_ai
                                                 }
-                                                sb.table("quarterly_reports").insert({
+                                                response = sb.table("quarterly_reports").insert({
                                                     "fund_id": fund_id,
                                                     "year": year_ai,
                                                     "quarter": quarter_ai,
@@ -3475,6 +3479,7 @@ def show_reports():
                                                     "irr": irr_ai,
                                                     "meta_data": meta_data
                                                 }).execute()
+                                                st.write("Debug Database Response:", response.data)
                                                 st.success("✅ Report saved!")
                                                 st.session_state.pop("report_ai_result", None)
                                                 clear_cache_and_rerun()
@@ -4191,7 +4196,7 @@ def show_reports():
                                     "investments_vs_expenses": inv_vs_exp,
                                     "special_reallocations": spec_realloc
                                 }
-                                sb.table("quarterly_reports").insert({
+                                response = sb.table("quarterly_reports").insert({
                                     "fund_id": fund_id,
                                     "year": year,
                                     "quarter": quarter,
@@ -4205,6 +4210,7 @@ def show_reports():
                                     "meta_data": meta_data
                                 }).execute()
                                 log_action("INSERT", "quarterly_reports", f"Added Q{quarter}/{year} report for {selected_fund}", {})
+                                st.write("Debug Database Response:", response.data)
                                 st.success("✅ Report saved!")
                                 clear_cache_and_rerun()
                             except Exception as e:
@@ -4281,7 +4287,7 @@ def show_reports():
                                                     "investments_vs_expenses": inv_vs_exp_ai,
                                                     "special_reallocations": spec_realloc_ai
                                                 }
-                                                sb.table("quarterly_reports").insert({
+                                                response = sb.table("quarterly_reports").insert({
                                                     "fund_id": fund_id,
                                                     "year": year_ai,
                                                     "quarter": quarter_ai,
@@ -4293,6 +4299,7 @@ def show_reports():
                                                     "irr": irr_ai,
                                                     "meta_data": meta_data
                                                 }).execute()
+                                                st.write("Debug Database Response:", response.data)
                                                 st.success("✅ Report saved!")
                                                 st.session_state.pop("report_ai_result", None)
                                                 clear_cache_and_rerun()
