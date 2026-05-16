@@ -14,7 +14,12 @@ import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
 from collections import defaultdict
 from supabase import create_client, Client
-from pe_vc_metrics import normalize_quarterly_report_metrics
+from pe_vc_metrics import (
+    format_report_currency,
+    format_report_multiple,
+    format_report_percent,
+    normalize_quarterly_report_metrics,
+)
 
 OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 HARDCODED_ALLOWED_EMAILS = set()
@@ -2840,8 +2845,13 @@ def show_fund_detail(fund):
         if reports:
             st.markdown("**Quarterly Reports**")
             for r in reports:
-                with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {r.get('tvpi','—')} | IRR: {r.get('irr','—')}%", expanded=False):
-                    st.write(f"NAV (Fund): {format_currency(float(r.get('nav',0)), currency_sym)} | DPI: {r.get('dpi','—')} | RVPI: {r.get('rvpi','—')}")
+                report_tvpi = format_report_multiple(r.get("tvpi"))
+                report_irr = format_report_percent(r.get("irr"))
+                report_nav = format_report_currency(r.get("nav"), currency_sym=currency_sym)
+                report_dpi = format_report_multiple(r.get("dpi"))
+                report_rvpi = format_report_multiple(r.get("rvpi"))
+                with st.expander(f"Q{r['quarter']}/{r['year']} | TVPI: {report_tvpi} | IRR: {report_irr}", expanded=False):
+                    st.write(f"NAV: {report_nav} | DPI: {report_dpi} | RVPI: {report_rvpi}")
                     if r.get('notes'):
                         st.write(f"Notes: {r.get('notes')}")
                     render_report_meta_data(r, currency_sym)
@@ -3003,6 +3013,9 @@ def show_fund_detail(fund):
                         "distributions": total_realized,
                         "investment_contributions": ai_rep.get("investment_contributions"),
                         "expense_contributions": ai_rep.get("expense_contributions"),
+                        "management_fee": ai_rep.get("management_fee"),
+                        "organizational_costs": ai_rep.get("organizational_costs"),
+                        "other_expenses": ai_rep.get("other_expenses"),
                         "total_invested": total_invested,
                         "total_realized": total_realized,
                         "total_unrealized": total_unrealized,
@@ -3377,6 +3390,9 @@ def render_quarterly_report_ai_confirm_form(fund_options, selected_fund_upload, 
                     "distributions": total_realized_ai,
                     "investment_contributions": ai_result.get("investment_contributions"),
                     "expense_contributions": ai_result.get("expense_contributions"),
+                    "management_fee": ai_result.get("management_fee"),
+                    "organizational_costs": ai_result.get("organizational_costs"),
+                    "other_expenses": ai_result.get("other_expenses"),
                     "total_invested": total_invested_ai,
                     "total_realized": total_realized_ai,
                     "total_unrealized": total_unrealized_ai,
@@ -3416,6 +3432,9 @@ REPORT_META_KEYS = [
     "paid_in_capital",
     "investment_contributions",
     "expense_contributions",
+    "management_fee",
+    "organizational_costs",
+    "other_expenses",
     "distributions",
     "total_invested",
     "total_realized",
@@ -3491,27 +3510,13 @@ def render_report_meta_data(report: dict, currency_sym: str = "$"):
         return value is not None and value != ""
 
     def fmt_currency_value(value):
-        try:
-            amount = float(value or 0)
-            if amount == 0:
-                return f"{currency_sym}0"
-            if amount < 0:
-                return f"({format_currency(abs(amount), currency_sym)})"
-            return format_currency(amount, currency_sym)
-        except Exception:
-            return str(value)
+        return format_report_currency(value, currency_sym=currency_sym, accounting=True)
 
     def fmt_multiple_value(value):
-        try:
-            return f"{float(value):.2f}x"
-        except Exception:
-            return str(value)
+        return format_report_multiple(value)
 
     def fmt_percent_value(value):
-        try:
-            return f"{float(value):.1f}%"
-        except Exception:
-            return str(value)
+        return format_report_percent(value)
 
     metric_defs = [
         ("Paid-in Capital", ["paid_in_capital", "total_invested"], fmt_currency_value, False),
@@ -3545,9 +3550,35 @@ def render_report_meta_data(report: dict, currency_sym: str = "$"):
 
     investments_vs_expenses = str(meta_data.get("investments_vs_expenses") or "").strip()
     special_reallocations = str(meta_data.get("special_reallocations") or "").strip()
+    structured_expense_lines = []
+    structured_income_lines = []
 
-    if investments_vs_expenses:
-        st.info(f"Investments vs Expenses\n\n{investments_vs_expenses}")
+    def add_money_line(lines, label, key, expense=False):
+        value = meta_data.get(key)
+        if value is None or value == "":
+            return
+        try:
+            amount = float(value)
+        except Exception:
+            return
+        if expense:
+            amount = -abs(amount)
+        lines.append(f"- {label}: {format_report_currency(amount, currency_sym=currency_sym, accounting=True)}")
+
+    add_money_line(structured_income_lines, "Investment contributions", "investment_contributions")
+    add_money_line(structured_income_lines, "Expense contributions", "expense_contributions")
+    add_money_line(structured_expense_lines, "Management fee", "management_fee", expense=True)
+    add_money_line(structured_expense_lines, "Organizational costs", "organizational_costs", expense=True)
+    add_money_line(structured_expense_lines, "Other expenses", "other_expenses", expense=True)
+
+    if investments_vs_expenses or structured_income_lines or structured_expense_lines:
+        details = []
+        if structured_income_lines or structured_expense_lines:
+            details.extend(structured_income_lines)
+            details.extend(structured_expense_lines)
+        if investments_vs_expenses:
+            details.append(investments_vs_expenses)
+        st.info("Investments vs Expenses\n\n" + "\n".join(details))
     if special_reallocations:
         st.info(f"Special Reallocations\n\n{special_reallocations}")
 
@@ -3727,11 +3758,11 @@ def show_reports():
                 "Fund": fund["name"],
                 "Quarter": f"Q{r['quarter']}/{r['year']}",
                 "Report Date": r.get("report_date", ""),
-                "NAV": format_currency(float(r.get("nav") or 0), "€" if fund.get("currency") == "EUR" else "$"),
-                "TVPI": f"{float(r.get('tvpi') or 0):.2f}x",
-                "DPI": f"{float(r.get('dpi') or 0):.2f}x",
-                "RVPI": f"{float(r.get('rvpi') or 0):.2f}x",
-                "IRR": f"{float(r.get('irr') or 0):.1f}%"
+                "NAV": format_report_currency(r.get("nav"), currency_sym="€" if fund.get("currency") == "EUR" else "$"),
+                "TVPI": format_report_multiple(r.get("tvpi")),
+                "DPI": format_report_multiple(r.get("dpi")),
+                "RVPI": format_report_multiple(r.get("rvpi")),
+                "IRR": format_report_percent(r.get("irr"))
             })
     
     if reports_data:
@@ -4504,11 +4535,11 @@ def show_reports():
                 "Fund": fund["name"],
                 "Quarter": f"Q{r['quarter']}/{r['year']}",
                 "Report Date": r.get("report_date", ""),
-                "NAV": format_currency(float(r.get("nav") or 0), "€" if fund.get("currency") == "EUR" else "$"),
-                "TVPI": f"{float(r.get('tvpi') or 0):.2f}x",
-                "DPI": f"{float(r.get('dpi') or 0):.2f}x",
-                "RVPI": f"{float(r.get('rvpi') or 0):.2f}x",
-                "IRR": f"{float(r.get('irr') or 0):.1f}%"
+                "NAV": format_report_currency(r.get("nav"), currency_sym="€" if fund.get("currency") == "EUR" else "$"),
+                "TVPI": format_report_multiple(r.get("tvpi")),
+                "DPI": format_report_multiple(r.get("dpi")),
+                "RVPI": format_report_multiple(r.get("rvpi")),
+                "IRR": format_report_percent(r.get("irr"))
             })
     
     if reports_data:

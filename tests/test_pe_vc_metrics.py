@@ -1,9 +1,21 @@
 import unittest
 
-from pe_vc_metrics import normalize_quarterly_report_metrics
+from pe_vc_metrics import (
+    format_report_currency,
+    format_report_multiple,
+    format_report_percent,
+    normalize_quarterly_report_metrics,
+)
 
 
 class ThriveCapitalAccountStatementTests(unittest.TestCase):
+    def test_report_formatting_helpers(self):
+        self.assertEqual(format_report_multiple(2.1486446512974466), "2.15x")
+        self.assertEqual(format_report_multiple(0), "0.00x")
+        self.assertEqual(format_report_percent(None), "N/A")
+        self.assertEqual(format_report_percent(0.1234), "0.1%")
+        self.assertEqual(format_report_currency(-1247, accounting=True), "($1,247)")
+
     def test_growth_a_statement_derives_net_metrics_and_reconciles(self):
         result = normalize_quarterly_report_metrics({
             "nav": 341396,

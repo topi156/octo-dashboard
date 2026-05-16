@@ -51,9 +51,45 @@ def first_number(data, keys, default=None, signed=True):
 def is_missing_metric(value):
     if value is None:
         return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
     if isinstance(value, str) and value.strip().lower() in NULL_TEXT_VALUES:
         return True
     return False
+
+
+def format_report_multiple(value):
+    if is_missing_metric(value):
+        return "N/A"
+    try:
+        return f"{float(value):.2f}x"
+    except Exception:
+        return "N/A"
+
+
+def format_report_percent(value):
+    if is_missing_metric(value):
+        return "N/A"
+    try:
+        return f"{float(value):.1f}%"
+    except Exception:
+        return "N/A"
+
+
+def format_report_currency(value, currency_sym="$", accounting=False):
+    if is_missing_metric(value):
+        return "N/A"
+    try:
+        amount = float(value)
+    except Exception:
+        return "N/A"
+
+    formatted = f"{currency_sym}{abs(amount):,.0f}"
+    if accounting and amount < 0:
+        return f"({formatted})"
+    if amount < 0:
+        return f"-{formatted}"
+    return formatted
 
 
 def normalize_quarterly_report_metrics(result):
