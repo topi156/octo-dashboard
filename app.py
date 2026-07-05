@@ -1791,6 +1791,12 @@ def show_overview():
     </style>
     """, unsafe_allow_html=True)
 
+    _lp_investors_top = get_investors()
+    _lp_calls_top = get_lp_calls()
+    lp_total_commitment = sum(investor_commitment_value(inv) for inv in _lp_investors_top)
+    lp_total_called = sum(lp_total_commitment * (c["call_pct"] / 100.0) for c in _lp_calls_top)
+    lp_called_pct = (lp_total_called / lp_total_commitment * 100) if lp_total_commitment > 0 else 0.0
+
     st.markdown("##### 🏛️ Legal & Commitment (Basis)")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1803,7 +1809,7 @@ def show_overview():
         st.metric("Uncalled Balance", format_overview_currency(total_uncalled_usd, "$"))
 
     st.markdown("##### 🚀 Cash & Performance (Net LP)")
-    c5, c6, c7, c8 = st.columns(4)
+    c5, c6, c7, c8, c9 = st.columns(5)
     with c5:
         st.metric("Total Paid-In (Cash Out)", format_overview_currency(total_paid_in_cash_usd, "$"))
     with c6:
@@ -1812,6 +1818,8 @@ def show_overview():
         st.metric("Portfolio TVPI", f"{portfolio_tvpi:.2f}x" if portfolio_tvpi > 0 else "—")
     with c8:
         st.metric("Portfolio Net IRR", irr_display)
+    with c9:
+        st.metric("LP Capital Called", f"{lp_called_pct:.1f}%", f"{format_currency(lp_total_called, '$')} of {format_currency(lp_total_commitment, '$')}")
 
     st.divider()
     col1 = st.container()
