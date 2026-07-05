@@ -1922,35 +1922,49 @@ def show_overview():
     currency_sym = "$" 
     total_fund_commitment = sum(investor_commitment_value(inv) for inv in investors)
 
-    col_sum1, col_sum2 = st.columns([1, 3])
+    summary_data = []
+    total_called_cum = 0.0
+    total_received_cum = 0.0
+    for c in lp_calls:
+        call_pct = c["call_pct"] / 100.0
+        total_called_amount = total_fund_commitment * call_pct
+
+        paid_commit = 0
+        for inv in investors:
+            payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
+            if payment and payment["is_paid"]:
+                paid_commit += investor_commitment_value(inv)
+
+        total_paid_amount = paid_commit * call_pct
+        outstanding = total_called_amount - total_paid_amount
+        total_called_cum += total_called_amount
+        total_received_cum += total_paid_amount
+
+        summary_data.append({
+            "Call": f"{c['call_date']} ({c['call_pct']}%)",
+            "Total Required": format_currency(total_called_amount, currency_sym),
+            "Total Received": format_currency(total_paid_amount, currency_sym),
+            "Outstanding Balance": format_currency(outstanding, currency_sym)
+        })
+
+    total_outstanding_cum = total_called_cum - total_received_cum
+    called_pct_overall = (total_called_cum / total_fund_commitment * 100) if total_fund_commitment > 0 else 0.0
+    received_pct_overall = (total_received_cum / total_fund_commitment * 100) if total_fund_commitment > 0 else 0.0
+
+    col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
     with col_sum1:
         st.metric("Total LP Commitments", format_currency(total_fund_commitment, currency_sym))
-
     with col_sum2:
-        if lp_calls:
-            summary_data = []
-            for c in lp_calls:
-                call_pct = c["call_pct"] / 100.0
-                total_called_amount = total_fund_commitment * call_pct
+        st.metric("Total Called to Date", format_currency(total_called_cum, currency_sym), f"{called_pct_overall:.1f}% of commitments")
+    with col_sum3:
+        st.metric("Total Received to Date", format_currency(total_received_cum, currency_sym), f"{received_pct_overall:.1f}% of commitments")
+    with col_sum4:
+        st.metric("Outstanding", format_currency(total_outstanding_cum, currency_sym))
 
-                paid_commit = 0
-                for inv in investors:
-                    payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
-                    if payment and payment["is_paid"]:
-                        paid_commit += investor_commitment_value(inv)
-
-                total_paid_amount = paid_commit * call_pct
-                outstanding = total_called_amount - total_paid_amount
-
-                summary_data.append({
-                    "Call": f"{c['call_date']} ({c['call_pct']}%)",
-                    "Total Required": format_currency(total_called_amount, currency_sym),
-                    "Total Received": format_currency(total_paid_amount, currency_sym),
-                    "Outstanding Balance": format_currency(outstanding, currency_sym)
-                })
-            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("No active capital calls yet.")
+    if lp_calls:
+        st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+    else:
+        st.info("No active capital calls yet.")
 
 def show_fund_expenses():
     st.title("💼 Fund Operating Expenses")
@@ -3260,36 +3274,51 @@ def show_investors():
 
     st.divider()
     st.markdown("### 📊 FOF Collection Summary")
-    
-    col_sum1, col_sum2 = st.columns([1, 3])
+
+    summary_data = []
+    total_called_cum = 0.0
+    total_received_cum = 0.0
+    for c in lp_calls:
+        call_pct = c["call_pct"] / 100.0
+        total_called_amount = total_fund_commitment * call_pct
+
+        paid_commit = 0
+        for inv in investors:
+            payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
+            if payment and payment["is_paid"]:
+                paid_commit += investor_commitment_value(inv)
+
+        total_paid_amount = paid_commit * call_pct
+        outstanding = total_called_amount - total_paid_amount
+        total_called_cum += total_called_amount
+        total_received_cum += total_paid_amount
+
+        summary_data.append({
+            "Call": f"{c['call_date']} ({c['call_pct']}%)",
+            "Total Required": format_currency(total_called_amount, currency_sym),
+            "Total Received": format_currency(total_paid_amount, currency_sym),
+            "Outstanding Balance": format_currency(outstanding, currency_sym)
+        })
+
+    total_outstanding_cum = total_called_cum - total_received_cum
+    called_pct_overall = (total_called_cum / total_fund_commitment * 100) if total_fund_commitment > 0 else 0.0
+    received_pct_overall = (total_received_cum / total_fund_commitment * 100) if total_fund_commitment > 0 else 0.0
+
+    col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
     with col_sum1:
         st.metric("Total LP Commitments", format_currency(total_fund_commitment, currency_sym))
-    
     with col_sum2:
-        if lp_calls:
-            summary_data = []
-            for c in lp_calls:
-                call_pct = c["call_pct"] / 100.0
-                total_called_amount = total_fund_commitment * call_pct
-                
-                paid_commit = 0
-                for inv in investors:
-                    payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
-                    if payment and payment["is_paid"]:
-                        paid_commit += investor_commitment_value(inv)
-                
-                total_paid_amount = paid_commit * call_pct
-                outstanding = total_called_amount - total_paid_amount
-                
-                summary_data.append({
-                    "Call": f"{c['call_date']} ({c['call_pct']}%)",
-                    "Total Required": format_currency(total_called_amount, currency_sym),
-                    "Total Received": format_currency(total_paid_amount, currency_sym),
-                    "Outstanding Balance": format_currency(outstanding, currency_sym)
-                })
-            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("No active capital calls yet.")
+        st.metric("Total Called to Date", format_currency(total_called_cum, currency_sym), f"{called_pct_overall:.1f}% of commitments")
+    with col_sum3:
+        st.metric("Total Received to Date", format_currency(total_received_cum, currency_sym), f"{received_pct_overall:.1f}% of commitments")
+    with col_sum4:
+        st.metric("Outstanding", format_currency(total_outstanding_cum, currency_sym))
+
+    if lp_calls:
+        st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+    else:
+        st.info("No active capital calls yet.")
+
 
     st.divider()
     st.markdown("### ➕ Manage LP Capital Calls")
