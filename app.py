@@ -1816,7 +1816,7 @@ def show_overview():
     with c8:
         st.metric("Portfolio Net IRR", irr_display)
     with c9:
-        st.metric("Called (Funds) vs LP Commitments", f"{fund_called_vs_lp_commit_pct:.1f}%", f"{format_currency(total_called_basis_usd, '$')} of {format_currency(lp_total_commitment, '$')}")
+        st.metric("Octo LP Deployment %", f"{fund_called_vs_lp_commit_pct:.1f}%", f"{format_currency(total_called_basis_usd, '$')} of {format_currency(lp_total_commitment, '$')}")
 
     st.divider()
     col1 = st.container()
