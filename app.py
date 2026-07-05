@@ -34,6 +34,26 @@ def get_allowed_emails() -> set[str]:
 def is_email_allowed(email: str) -> bool:
     return email.strip().lower() in get_allowed_emails()
 
+def normalize_commitment_amount(value) -> float:
+    """Normalize a raw commitment number that may have been entered in millions
+    (e.g. 1 meaning $1,000,000) instead of raw dollars."""
+    value = float(value or 0)
+    if 0 < value <= 1000:
+        value *= 1_000_000
+    return value
+
+def investor_commitment_value(inv) -> float:
+    """Normalize an investor's commitment amount.
+
+    Mirrors the normalization already applied to funds' `commitment` field
+    (see commitment_value()): some commitments were entered/stored in millions
+    (e.g. 1 meaning $1,000,000) instead of raw dollars. Without this, such
+    values get summed as-is (e.g. 1 instead of 1,000,000), silently
+    undercounting "Total LP Commitments" by ~$1M per affected investor, even
+    though format_currency() displays them as "$1.00M" (looking correct).
+    """
+    return normalize_commitment_amount(inv.get("commitment"))
+
 def format_currency(amount: float, currency_sym: str = "$") -> str:
     if amount is None or amount == 0:
         return "—"
@@ -1182,7 +1202,7 @@ def generate_master_excel_bytes() -> bytes:
             for inv in investors:
                 row = {
                     "Investor Name": inv["name"],
-                    "Commitment": inv.get("commitment", 0)
+                    "Commitment": investor_commitment_value(inv)
                 }
                 for c in lp_calls:
                     col_name = f"{c['call_date']} ({c['call_pct']}%)"
@@ -1900,7 +1920,7 @@ def show_overview():
     lp_calls = get_lp_calls()
     payments = get_lp_payments()
     currency_sym = "$" 
-    total_fund_commitment = sum(float(inv.get("commitment", 0)) for inv in investors)
+    total_fund_commitment = sum(investor_commitment_value(inv) for inv in investors)
 
     col_sum1, col_sum2 = st.columns([1, 3])
     with col_sum1:
@@ -1917,7 +1937,7 @@ def show_overview():
                 for inv in investors:
                     payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
                     if payment and payment["is_paid"]:
-                        paid_commit += float(inv.get("commitment", 0))
+                        paid_commit += investor_commitment_value(inv)
 
                 total_paid_amount = paid_commit * call_pct
                 outstanding = total_called_amount - total_paid_amount
@@ -3068,8 +3088,9 @@ def show_investors():
                         inv_commit = st.number_input(f"Commitment Amount ({currency_sym})", min_value=0.0, step=500000.0)
                     if st.form_submit_button("Save Investor", type="primary"):
                         try:
-                            sb.table("investors").insert({"name": inv_name, "commitment": inv_commit}).execute()
-                            log_action("INSERT", "investors", f"Added new investor: {inv_name}", {"commitment": inv_commit})
+                            inv_commit_norm = normalize_commitment_amount(inv_commit)
+                            sb.table("investors").insert({"name": inv_name, "commitment": inv_commit_norm}).execute()
+                            log_action("INSERT", "investors", f"Added new investor: {inv_name}", {"commitment": inv_commit_norm})
                             st.success("Investor added!")
                             clear_cache_and_rerun()
                         except Exception as e:
@@ -3098,6 +3119,7 @@ def show_investors():
                                             commit_val = float(commit_str)
                                         except:
                                             commit_val = 0.0
+                                        commit_val = normalize_commitment_amount(commit_val)
                                         
                                         sb.table("investors").insert({"name": name_val, "commitment": commit_val}).execute()
                                         count += 1
@@ -3119,7 +3141,7 @@ def show_investors():
                 with c1:
                     st.write(f"**{inv['name']}**")
                 with c2:
-                    st.write(format_currency(float(inv.get("commitment", 0)), currency_sym))
+                    st.write(format_currency(investor_commitment_value(inv), currency_sym))
                 with c3:
                     if st.button("✏️", key=f"edit_inv_btn_{inv['id']}", help="Edit Investor"):
                         st.session_state[f"editing_inv_{inv['id']}"] = True
@@ -3147,13 +3169,14 @@ def show_investors():
                 if st.session_state.get(f"editing_inv_{inv['id']}"):
                     with st.form(f"edit_inv_form_{inv['id']}"):
                         new_name = st.text_input("Investor Name", value=inv["name"])
-                        new_commit = st.number_input("Commitment", value=float(inv.get("commitment", 0)), step=500000.0)
+                        new_commit = st.number_input("Commitment", value=investor_commitment_value(inv), step=500000.0)
                         ce1, ce2 = st.columns(2)
                         with ce1:
                             if st.form_submit_button("💾 Save Changes"):
                                 try:
                                     log_action("UPDATE", "investors", f"Updated investor: {inv['name']} to {new_name}", inv)
-                                    sb.table("investors").update({"name": new_name, "commitment": new_commit}).eq("id", inv["id"]).execute()
+                                    new_commit_norm = normalize_commitment_amount(new_commit)
+                                    sb.table("investors").update({"name": new_name, "commitment": new_commit_norm}).eq("id", inv["id"]).execute()
                                     st.session_state.pop(f"editing_inv_{inv['id']}", None)
                                     clear_cache_and_rerun()
                                 except Exception as e:
@@ -3179,7 +3202,7 @@ def show_investors():
     total_fund_commitment = 0
     
     for inv in investors:
-        inv_commit = float(inv.get("commitment", 0))
+        inv_commit = investor_commitment_value(inv)
         total_fund_commitment += inv_commit
         row = {
             "id": inv["id"],
@@ -3253,7 +3276,7 @@ def show_investors():
                 for inv in investors:
                     payment = next((p for p in payments if p["lp_call_id"] == c["id"] and p["investor_id"] == inv["id"]), None)
                     if payment and payment["is_paid"]:
-                        paid_commit += float(inv.get("commitment", 0))
+                        paid_commit += investor_commitment_value(inv)
                 
                 total_paid_amount = paid_commit * call_pct
                 outstanding = total_called_amount - total_paid_amount
